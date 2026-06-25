@@ -7,11 +7,11 @@ import { Boom } from '@hapi/boom';
 import qrcode from 'qrcode';
 import path from 'path';
 import pino from 'pino';
-import type { WhatsAppAdapter, RawInboundMessage, WaStatusValue } from './WhatsAppAdapter.js';
+import type { WhatsAppAdapter, RawInboundMessage, RawContact, WaStatusValue } from './WhatsAppAdapter.js';
 
 type EventCallback<T> = (data: T) => void;
 
-const HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+const HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
 export class BaileysAdapter implements WhatsAppAdapter {
   private sock: ReturnType<typeof makeWASocket> | null = null;
@@ -22,6 +22,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
   private messageListeners: EventCallback<RawInboundMessage>[] = [];
+  private contactListeners: EventCallback<RawContact>[] = [];
   private qrListeners: EventCallback<string>[] = [];
   private statusListeners: EventCallback<WaStatusValue>[] = [];
 
@@ -29,27 +30,29 @@ export class BaileysAdapter implements WhatsAppAdapter {
     this.sessionDir = path.resolve(sessionDir);
   }
 
-  status(): WaStatusValue {
-    return this.currentStatus;
-  }
+  status(): WaStatusValue { return this.currentStatus; }
 
-  on(event: 'message', cb: EventCallback<RawInboundMessage>): void;
-  on(event: 'qr', cb: EventCallback<string>): void;
-  on(event: 'status', cb: EventCallback<WaStatusValue>): void;
+  on(event: 'message',  cb: EventCallback<RawInboundMessage>): void;
+  on(event: 'contact',  cb: EventCallback<RawContact>): void;
+  on(event: 'qr',       cb: EventCallback<string>): void;
+  on(event: 'status',   cb: EventCallback<WaStatusValue>): void;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   on(event: string, cb: (data: any) => void): void {
-    if (event === 'message') this.messageListeners.push(cb as EventCallback<RawInboundMessage>);
-    if (event === 'qr')     this.qrListeners.push(cb as EventCallback<string>);
-    if (event === 'status') this.statusListeners.push(cb as EventCallback<WaStatusValue>);
+    if (event === 'message') this.messageListeners.push(cb);
+    if (event === 'contact') this.contactListeners.push(cb);
+    if (event === 'qr')      this.qrListeners.push(cb);
+    if (event === 'status')  this.statusListeners.push(cb);
   }
 
-  private emit(event: 'message', data: RawInboundMessage): void;
-  private emit(event: 'qr', data: string): void;
-  private emit(event: 'status', data: WaStatusValue): void;
+  private emit(event: 'message',  data: RawInboundMessage): void;
+  private emit(event: 'contact',  data: RawContact): void;
+  private emit(event: 'qr',       data: string): void;
+  private emit(event: 'status',   data: WaStatusValue): void;
   private emit(event: string, data: unknown): void {
     if (event === 'message') this.messageListeners.forEach(cb => cb(data as RawInboundMessage));
-    if (event === 'qr')     this.qrListeners.forEach(cb => cb(data as string));
-    if (event === 'status') this.statusListeners.forEach(cb => cb(data as WaStatusValue));
+    if (event === 'contact') this.contactListeners.forEach(cb => cb(data as RawContact));
+    if (event === 'qr')      this.qrListeners.forEach(cb => cb(data as string));
+    if (event === 'status')  this.statusListeners.forEach(cb => cb(data as WaStatusValue));
   }
 
   async connect(): Promise<void> {
@@ -62,7 +65,6 @@ export class BaileysAdapter implements WhatsAppAdapter {
       this.reconnectTimer = null;
     }
 
-    // Close any existing socket cleanly before reconnecting
     if (this.sock) {
       try { this.sock.end(undefined); } catch {}
       this.sock = null;
@@ -90,6 +92,8 @@ export class BaileysAdapter implements WhatsAppAdapter {
       keepAliveIntervalMs: 25_000,
       retryRequestDelayMs: 500,
       connectTimeoutMs: 30_000,
+      syncFullHistory: true,
+      getMessage: async () => undefined,
     });
 
     this.connecting = false;
@@ -100,7 +104,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        console.log('[Baileys] QR gerado — escaneie com o WhatsApp');
+        console.log('[Baileys] QR gerado');
         const dataUrl = await qrcode.toDataURL(qr);
         this.emit('qr', dataUrl);
       }
@@ -122,10 +126,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
         this.currentStatus = 'close';
         this.emit('status', 'close');
 
-        if (this.manuallyDisconnected) {
-          console.log('[Baileys] Desconexão manual — não reconectando');
-          return;
-        }
+        if (this.manuallyDisconnected) return;
 
         const noReconnect = [
           DisconnectReason.loggedOut,
@@ -133,10 +134,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
           DisconnectReason.badSession,
         ] as number[];
 
-        if (noReconnect.includes(statusCode as number)) {
-          console.log('[Baileys] Motivo de desconexão permanente:', statusCode);
-          return;
-        }
+        if (noReconnect.includes(statusCode as number)) return;
 
         const delay = statusCode === DisconnectReason.restartRequired ? 1000 : 4000;
         console.log(`[Baileys] Reconectando em ${delay}ms...`);
@@ -144,13 +142,40 @@ export class BaileysAdapter implements WhatsAppAdapter {
       }
     });
 
-    // Sync existing WhatsApp message history on connect
-    this.sock.ev.on('messaging-history.set', ({ messages: histMsgs }) => {
+    // ── Sync existing chats (contacts) ────────────────────────────────────
+    this.sock.ev.on('chats.upsert', (chats) => {
+      let discovered = 0;
+      for (const chat of chats) {
+        const jid = chat.id ?? '';
+        if (jid.includes('@g.us') || jid.includes('@broadcast')) continue;
+        const phone = jid.replace('@s.whatsapp.net', '');
+        if (!phone) continue;
+        this.emit('contact', { phone, name: chat.name ?? undefined });
+        discovered++;
+      }
+      if (discovered > 0) console.log(`[Baileys] ${discovered} contatos via chats.upsert`);
+    });
+
+    // ── Sync existing contacts from WA address book ───────────────────────
+    this.sock.ev.on('contacts.upsert', (contacts) => {
+      for (const c of contacts) {
+        const jid = c.id ?? '';
+        if (jid.includes('@g.us') || jid.includes('@broadcast')) continue;
+        const phone = jid.replace('@s.whatsapp.net', '');
+        if (!phone) continue;
+        const name = c.name ?? c.notify ?? undefined;
+        this.emit('contact', { phone, name });
+      }
+    });
+
+    // ── Sync message history (last 30 days) ───────────────────────────────
+    this.sock.ev.on('messaging-history.set', ({ messages: histMsgs, isLatest }) => {
       const cutoff = Date.now() - HISTORY_WINDOW_MS;
       let synced = 0;
 
+      console.log(`[Baileys] messaging-history.set: ${histMsgs.length} msgs, isLatest=${isLatest}`);
+
       for (const msg of histMsgs) {
-        if (msg.key.fromMe) continue;
         if (!msg.message) continue;
 
         const ts = Number(msg.messageTimestamp) * 1000;
@@ -163,17 +188,18 @@ export class BaileysAdapter implements WhatsAppAdapter {
         if (!text) continue;
 
         const remoteJid = msg.key.remoteJid ?? '';
-        if (remoteJid.includes('@g.us')) continue; // skip groups
+        if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) continue;
 
         const fromPhone = remoteJid.replace('@s.whatsapp.net', '');
         if (!fromPhone) continue;
 
         this.emit('message', {
-          waMessageId: msg.key.id ?? `hist_${Date.now()}_${synced}`,
+          waMessageId: msg.key.id ?? `hist_${ts}_${synced}`,
           fromPhone,
           fromName: undefined,
           text,
           timestamp: ts,
+          fromMe: msg.key.fromMe ?? false,
         });
         synced++;
       }
@@ -183,11 +209,12 @@ export class BaileysAdapter implements WhatsAppAdapter {
       }
     });
 
+    // ── Live messages ────────────────────────────────────────────────────
     this.sock.ev.on('messages.upsert', ({ messages, type }) => {
       if (type !== 'notify') return;
 
       for (const msg of messages) {
-        if (!msg.message || msg.key.fromMe) continue;
+        if (!msg.message) continue;
 
         const text =
           msg.message.conversation ??
@@ -195,12 +222,16 @@ export class BaileysAdapter implements WhatsAppAdapter {
           null;
         if (!text) continue;
 
-        const fromPhone = (msg.key.remoteJid ?? '').replace('@s.whatsapp.net', '');
-        const fromName  = msg.pushName ?? undefined;
-        const waMessageId = msg.key.id ?? `${Date.now()}`;
-        const timestamp = Number(msg.messageTimestamp) * 1000;
+        const remoteJid = msg.key.remoteJid ?? '';
+        if (remoteJid.includes('@g.us')) continue;
 
-        this.emit('message', { waMessageId, fromPhone, fromName, text, timestamp });
+        const fromPhone  = remoteJid.replace('@s.whatsapp.net', '');
+        const fromName   = msg.pushName ?? undefined;
+        const waMessageId = msg.key.id ?? `${Date.now()}`;
+        const timestamp  = Number(msg.messageTimestamp) * 1000;
+        const fromMe     = msg.key.fromMe ?? false;
+
+        this.emit('message', { waMessageId, fromPhone, fromName, text, timestamp, fromMe });
       }
     });
   }

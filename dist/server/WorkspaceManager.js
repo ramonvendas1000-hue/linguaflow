@@ -46,12 +46,23 @@ export class WorkspaceManager {
                 workspace.lastQr = null;
             this.io.to(id).emit('wa:status', status);
         });
+        wa.on('contact', (raw) => {
+            try {
+                pipeline.handleContactDiscovery(raw);
+            }
+            catch { }
+        });
         wa.on('message', async (raw) => {
             try {
-                await pipeline.handleInbound(raw);
+                if (raw.fromMe) {
+                    await pipeline.handleHistoryOutbound(raw);
+                }
+                else {
+                    await pipeline.handleInbound(raw);
+                }
             }
             catch (err) {
-                console.error(`[ws:${slug}] inbound error:`, err);
+                console.error(`[ws:${slug}] message error:`, err);
             }
         });
         wa.connect().catch(err => console.error(`[ws:${slug}] connect error:`, err));

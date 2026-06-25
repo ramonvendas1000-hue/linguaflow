@@ -12,6 +12,59 @@ export class MessagePipeline {
     broadcast(event, data) {
         this.io.to(this.workspaceId).emit(event, data);
     }
+    // Called by chats.set / contacts.set — ensures contact exists without a message
+    handleContactDiscovery(raw) {
+        let contact = this.db.getContactByPhone(raw.phone);
+        if (!contact) {
+            contact = this.db.saveContact({
+                name: raw.name ?? raw.phone,
+                phone: raw.phone,
+                currentLang: 'en',
+                autoDetectLang: true,
+                listId: 'list_incoming',
+                online: false,
+            });
+            this.broadcast('contact:updated', contact);
+        }
+        else if (raw.name && raw.name !== contact.name && raw.name !== raw.phone) {
+            const updated = this.db.updateContact(contact.id, { name: raw.name });
+            if (updated)
+                this.broadcast('contact:updated', updated);
+        }
+    }
+    // Historical outbound messages (fromMe=true) — show in thread without re-sending
+    async handleHistoryOutbound(raw) {
+        if (this.db.isDuplicateWaMessage(raw.waMessageId))
+            return;
+        let contact = this.db.getContactByPhone(raw.fromPhone);
+        if (!contact) {
+            contact = this.db.saveContact({
+                name: raw.fromPhone,
+                phone: raw.fromPhone,
+                currentLang: 'en',
+                autoDetectLang: true,
+                listId: 'list_incoming',
+                online: false,
+            });
+            this.broadcast('contact:updated', contact);
+        }
+        const message = {
+            id: uuid(),
+            contactId: contact.id,
+            direction: 'outbound',
+            originalText: raw.text,
+            originalLang: 'pt',
+            translatedText: raw.text,
+            translatedLang: 'pt',
+            translationStatus: 'skipped',
+            timestamp: raw.timestamp,
+            waMessageId: raw.waMessageId,
+            delivered: true,
+        };
+        this.db.saveMessage(message);
+        this.db.touchContact(contact.id, raw.timestamp);
+        this.broadcast('message:new', message);
+    }
     async handleInbound(raw) {
         if (this.db.isDuplicateWaMessage(raw.waMessageId))
             return;
