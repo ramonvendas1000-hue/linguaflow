@@ -3,6 +3,12 @@ export type Direction = 'inbound' | 'outbound';
 export type TranslationStatus = 'ok' | 'pending' | 'failed' | 'skipped';
 export type WaStatus = 'disconnected' | 'connecting' | 'open' | 'close';
 
+export interface ContactNote {
+  id: string;
+  text: string;
+  createdAt: number;
+}
+
 export interface Message {
   id: string;
   contactId: string;
@@ -32,6 +38,7 @@ export interface Contact {
   unread: number;
   lastMessageAt?: number;
   createdAt: number;
+  notes?: ContactNote[];
 }
 
 export interface CrmList {
@@ -42,41 +49,29 @@ export interface CrmList {
   isSystem?: boolean;
 }
 
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: number;
+}
+
 export interface BootstrapPayload {
   contacts: Contact[];
   messages: Record<string, Message[]>;
   lists: CrmList[];
+  workspace: WorkspaceInfo;
 }
 
-export interface SendMessagePayload {
-  contactId: string;
-  text: string;
-}
-
-export interface MoveContactPayload {
-  contactId: string;
-  listId: string;
-}
-
-export interface SetLangPayload {
-  contactId: string;
-  lang: LangCode;
-}
-
-export interface ListCreatePayload {
-  name: string;
-  color: string;
-}
-
-export interface ListRenamePayload {
-  listId: string;
-  name: string;
-}
-
-export interface ListDeletePayload {
-  listId: string;
-}
-
-export interface ChatReadPayload {
-  contactId: string;
-}
+export interface SendMessagePayload { contactId: string; text: string; }
+export interface MoveContactPayload { contactId: string; listId: string; }
+export interface SetLangPayload { contactId: string; lang: LangCode; }
+export interface RenameContactPayload { contactId: string; name: string; }
+export interface AddNotePayload { contactId: string; text: string; }
+export interface RemoveNotePayload { contactId: string; noteId: string; }
+export interface ListCreatePayload { name: string; color: string; }
+export interface ListRenamePayload { listId: string; name: string; }
+export interface ListDeletePayload { listId: string; }
+export interface ChatReadPayload { contactId: string; }
+export interface JoinWorkspacePayload { workspaceId: string; }
+export interface CreateWorkspacePayload { name: string; }

@@ -2,24 +2,30 @@ import { v4 as uuid } from 'uuid';
 import type { Server as SocketServer } from 'socket.io';
 import type { WhatsAppAdapter, RawInboundMessage } from './adapters/WhatsAppAdapter.js';
 import { translate, detectLang } from './services/translation.js';
-import * as db from './services/db.js';
+import type { DbStore } from './services/DbStore.js';
 import type { Message, LangCode } from '../types/index.js';
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES    = 3;
 const RETRY_DELAY_MS = 5000;
 
 export class MessagePipeline {
   constructor(
-    private wa: WhatsAppAdapter,
-    private io: SocketServer
+    private wa:          WhatsAppAdapter,
+    private io:          SocketServer,
+    private workspaceId: string,
+    private db:          DbStore,
   ) {}
 
-  async handleInbound(raw: RawInboundMessage): Promise<void> {
-    if (db.isDuplicateWaMessage(raw.waMessageId)) return;
+  private broadcast(event: string, data: unknown) {
+    this.io.to(this.workspaceId).emit(event, data);
+  }
 
-    let contact = db.getContactByPhone(raw.fromPhone);
+  async handleInbound(raw: RawInboundMessage): Promise<void> {
+    if (this.db.isDuplicateWaMessage(raw.waMessageId)) return;
+
+    let contact = this.db.getContactByPhone(raw.fromPhone);
     if (!contact) {
-      contact = db.saveContact({
+      contact = this.db.saveContact({
         name: raw.fromName ?? raw.fromPhone,
         phone: raw.fromPhone,
         currentLang: 'en',
@@ -34,15 +40,11 @@ export class MessagePipeline {
       : contact.currentLang;
 
     if (contact.autoDetectLang && detectedLang !== contact.currentLang) {
-      db.updateContact(contact.id, { currentLang: detectedLang, autoDetectLang: false });
-      contact = db.getContact(contact.id)!;
+      this.db.updateContact(contact.id, { currentLang: detectedLang, autoDetectLang: false });
+      contact = this.db.getContact(contact.id)!;
     }
 
-    const translationResult = await translate({
-      text: raw.text,
-      from: detectedLang,
-      to: 'pt',
-    });
+    const translationResult = await translate({ text: raw.text, from: detectedLang, to: 'pt' });
 
     const message: Message = {
       id: uuid(),
@@ -58,9 +60,10 @@ export class MessagePipeline {
       waMessageId: raw.waMessageId,
     };
 
-    db.saveMessage(message);
-    db.touchContact(contact.id, raw.timestamp);
-    this.io.emit('message:new', message);
+    this.db.saveMessage(message);
+    this.db.touchContact(contact.id, raw.timestamp);
+    this.broadcast('message:new', message);
+    this.broadcast('contact:updated', this.db.getContact(contact.id));
 
     if (!translationResult.ok) {
       this.retryTranslation(message, raw.text, detectedLang, 'pt', 0);
@@ -68,16 +71,11 @@ export class MessagePipeline {
   }
 
   async handleOutbound(contactId: string, textPt: string): Promise<Message> {
-    const contact = db.getContact(contactId);
+    const contact = this.db.getContact(contactId);
     if (!contact) throw new Error(`Contact not found: ${contactId}`);
 
     const customerLang = contact.currentLang;
-
-    const translationResult = await translate({
-      text: textPt,
-      from: 'pt',
-      to: customerLang,
-    });
+    const translationResult = await translate({ text: textPt, from: 'pt', to: customerLang });
 
     if (!translationResult.ok) {
       throw new Error('Translation failed — message NOT sent to protect customer experience');
@@ -99,31 +97,27 @@ export class MessagePipeline {
       delivered: true,
     };
 
-    db.saveMessage(message);
-    db.touchContact(contactId, message.timestamp);
-    this.io.emit('message:new', message);
+    this.db.saveMessage(message);
+    this.db.touchContact(contactId, message.timestamp);
+    this.broadcast('message:new', message);
     return message;
   }
 
   private retryTranslation(
-    msg: Message,
-    originalText: string,
-    from: LangCode,
-    to: LangCode,
-    attempt: number
+    msg: Message, originalText: string, from: LangCode, to: LangCode, attempt: number,
   ): void {
     if (attempt >= MAX_RETRIES) return;
 
     setTimeout(async () => {
       const result = await translate({ text: originalText, from, to });
       if (result.ok) {
-        db.updateMessage(msg.contactId, msg.id, {
+        this.db.updateMessage(msg.contactId, msg.id, {
           translatedText: result.text,
           translationStatus: 'ok',
           translationProvider: result.provider,
         });
-        const updated = db.getMessages(msg.contactId).find(m => m.id === msg.id);
-        if (updated) this.io.emit('message:new', updated);
+        const updated = this.db.getMessages(msg.contactId).find(m => m.id === msg.id);
+        if (updated) this.broadcast('message:new', updated);
       } else {
         this.retryTranslation(msg, originalText, from, to, attempt + 1);
       }

@@ -3,6 +3,12 @@ export type Direction = 'inbound' | 'outbound';
 export type TranslationStatus = 'ok' | 'pending' | 'failed' | 'skipped';
 export type WaStatus = 'disconnected' | 'connecting' | 'open' | 'close';
 
+export interface ContactNote {
+  id: string;
+  text: string;
+  createdAt: number;
+}
+
 export interface Message {
   id: string;
   contactId: string;
@@ -32,6 +38,7 @@ export interface Contact {
   unread: number;
   lastMessageAt?: number;
   createdAt: number;
+  notes?: ContactNote[];
 }
 
 export interface CrmList {
@@ -40,4 +47,11 @@ export interface CrmList {
   color: string;
   order: number;
   isSystem?: boolean;
+}
+
+export interface WorkspaceInfo {
+  id: string;
+  name: string;
+  slug: string;
+  createdAt: number;
 }

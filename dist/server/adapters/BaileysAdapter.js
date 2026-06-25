@@ -2,10 +2,14 @@ import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaile
 import qrcode from 'qrcode';
 import path from 'path';
 import pino from 'pino';
+const HISTORY_WINDOW_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
 export class BaileysAdapter {
     constructor(sessionDir = '.wa-sessions') {
         this.sock = null;
         this.currentStatus = 'close';
+        this.manuallyDisconnected = false;
+        this.connecting = false;
+        this.reconnectTimer = null;
         this.messageListeners = [];
         this.qrListeners = [];
         this.statusListeners = [];
@@ -32,29 +36,45 @@ export class BaileysAdapter {
             this.statusListeners.forEach(cb => cb(data));
     }
     async connect() {
+        if (this.connecting)
+            return;
+        this.connecting = true;
+        this.manuallyDisconnected = false;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        // Close any existing socket cleanly before reconnecting
+        if (this.sock) {
+            try {
+                this.sock.end(undefined);
+            }
+            catch { }
+            this.sock = null;
+        }
         console.log('[Baileys] Inicializando sessão em', this.sessionDir);
         const { state, saveCreds } = await useMultiFileAuthState(this.sessionDir);
         let version = [2, 3000, 1015901307];
         try {
-            console.log('[Baileys] Buscando versão mais recente do WhatsApp...');
             const result = await Promise.race([
                 fetchLatestBaileysVersion(),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000)),
+                new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 8000)),
             ]);
             version = result.version;
-            console.log('[Baileys] Versão obtida:', version);
         }
         catch {
             console.log('[Baileys] Usando versão fallback:', version);
         }
-        console.log('[Baileys] Criando socket...');
         this.sock = makeWASocket({
             version,
             auth: state,
             logger: pino({ level: 'silent' }),
             browser: ['LinguaFlow', 'Chrome', '120.0.0'],
+            keepAliveIntervalMs: 25000,
+            retryRequestDelayMs: 500,
+            connectTimeoutMs: 30000,
         });
-        console.log('[Baileys] Socket criado, aguardando eventos...');
+        this.connecting = false;
         this.sock.ev.on('creds.update', saveCreds);
         this.sock.ev.on('connection.update', async (update) => {
             const { connection, lastDisconnect, qr } = update;
@@ -69,7 +89,6 @@ export class BaileysAdapter {
                 this.emit('status', 'open');
             }
             if (connection === 'connecting') {
-                console.log('[Baileys] Conectando ao WhatsApp...');
                 this.currentStatus = 'connecting';
                 this.emit('status', 'connecting');
             }
@@ -78,11 +97,58 @@ export class BaileysAdapter {
                 console.log('[Baileys] Conexão fechada. Código:', statusCode);
                 this.currentStatus = 'close';
                 this.emit('status', 'close');
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
-                if (shouldReconnect) {
-                    console.log('[Baileys] Reconectando em 3s...');
-                    setTimeout(() => this.connect(), 3000);
+                if (this.manuallyDisconnected) {
+                    console.log('[Baileys] Desconexão manual — não reconectando');
+                    return;
                 }
+                const noReconnect = [
+                    DisconnectReason.loggedOut,
+                    DisconnectReason.connectionReplaced,
+                    DisconnectReason.badSession,
+                ];
+                if (noReconnect.includes(statusCode)) {
+                    console.log('[Baileys] Motivo de desconexão permanente:', statusCode);
+                    return;
+                }
+                const delay = statusCode === DisconnectReason.restartRequired ? 1000 : 4000;
+                console.log(`[Baileys] Reconectando em ${delay}ms...`);
+                this.reconnectTimer = setTimeout(() => this.connect(), delay);
+            }
+        });
+        // Sync existing WhatsApp message history on connect
+        this.sock.ev.on('messaging-history.set', ({ messages: histMsgs }) => {
+            const cutoff = Date.now() - HISTORY_WINDOW_MS;
+            let synced = 0;
+            for (const msg of histMsgs) {
+                if (msg.key.fromMe)
+                    continue;
+                if (!msg.message)
+                    continue;
+                const ts = Number(msg.messageTimestamp) * 1000;
+                if (ts < cutoff)
+                    continue;
+                const text = msg.message.conversation ??
+                    msg.message.extendedTextMessage?.text ??
+                    null;
+                if (!text)
+                    continue;
+                const remoteJid = msg.key.remoteJid ?? '';
+                if (remoteJid.includes('@g.us'))
+                    continue; // skip groups
+                const fromPhone = remoteJid.replace('@s.whatsapp.net', '');
+                if (!fromPhone)
+                    continue;
+                this.emit('message', {
+                    waMessageId: msg.key.id ?? `hist_${Date.now()}_${synced}`,
+                    fromPhone,
+                    fromName: undefined,
+                    text,
+                    timestamp: ts,
+                });
+                synced++;
+            }
+            if (synced > 0) {
+                console.log(`[Baileys] Sincronizadas ${synced} mensagens do histórico`);
             }
         });
         this.sock.ev.on('messages.upsert', ({ messages, type }) => {
@@ -99,13 +165,23 @@ export class BaileysAdapter {
                 const fromPhone = (msg.key.remoteJid ?? '').replace('@s.whatsapp.net', '');
                 const fromName = msg.pushName ?? undefined;
                 const waMessageId = msg.key.id ?? `${Date.now()}`;
-                const timestamp = msg.messageTimestamp * 1000;
+                const timestamp = Number(msg.messageTimestamp) * 1000;
                 this.emit('message', { waMessageId, fromPhone, fromName, text, timestamp });
             }
         });
     }
     async disconnect() {
-        await this.sock?.logout();
+        this.manuallyDisconnected = true;
+        if (this.reconnectTimer) {
+            clearTimeout(this.reconnectTimer);
+            this.reconnectTimer = null;
+        }
+        try {
+            await this.sock?.logout();
+        }
+        catch {
+            this.sock?.end(undefined);
+        }
         this.sock = null;
         this.currentStatus = 'close';
         this.emit('status', 'close');

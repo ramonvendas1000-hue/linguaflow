@@ -5,28 +5,29 @@ import { Server as SocketServer } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { BaileysAdapter } from './adapters/BaileysAdapter.js';
-import { MessagePipeline } from './MessagePipeline.js';
-import * as db from './services/db.js';
+import { WorkspaceManager } from './WorkspaceManager.js';
 import type {
   SendMessagePayload,
   MoveContactPayload,
   SetLangPayload,
+  RenameContactPayload,
+  AddNotePayload,
+  RemoveNotePayload,
   ListCreatePayload,
   ListRenamePayload,
   ListDeletePayload,
   ChatReadPayload,
+  JoinWorkspacePayload,
+  CreateWorkspacePayload,
   LangCode,
 } from '../types/index.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 4000;
 
-const app = express();
+const app        = express();
 const httpServer = createServer(app);
-const io = new SocketServer(httpServer, {
-  cors: { origin: '*' },
-});
+const io         = new SocketServer(httpServer, { cors: { origin: '*' } });
 
 app.use(cors());
 app.use(express.json());
@@ -34,129 +35,164 @@ app.use(express.json());
 const clientDist = path.resolve(__dirname, '../../client/dist');
 app.use(express.static(clientDist));
 
-app.get('/api/bootstrap', (_req, res) => {
-  res.json({
-    contacts: db.allContacts(),
-    messages: db.allMessagesGrouped(),
-    lists: db.allLists(),
-  });
-});
-
 app.get('*', (_req, res) => {
   res.sendFile(path.join(clientDist, 'index.html'));
 });
 
-const wa = new BaileysAdapter();
-const pipeline = new MessagePipeline(wa, io);
-
-// Cache the last QR so late-connecting clients get it immediately
-let lastQr: string | null = null;
-
-wa.on('qr', (qrDataUrl) => {
-  lastQr = qrDataUrl;
-  io.emit('wa:qr', qrDataUrl);
-  console.log('[Server] QR emitido para todos os clientes conectados');
-});
-
-wa.on('status', (status) => {
-  if (status === 'open') lastQr = null; // clear QR once connected
-  io.emit('wa:status', status);
-});
-
-wa.on('message', async (raw) => {
-  try {
-    await pipeline.handleInbound(raw);
-  } catch (err) {
-    console.error('[inbound error]', err);
-  }
-});
+const wm = new WorkspaceManager(io);
 
 io.on('connection', (socket) => {
-  console.log('[socket] client connected:', socket.id);
+  console.log('[socket] connected:', socket.id);
 
-  // Send current WA status immediately
-  socket.emit('wa:status', wa.status());
+  // Send current workspace list so the client can pick one
+  socket.emit('workspace:list', wm.list());
 
-  // If QR already generated and WA not yet connected, send it right away
-  if (lastQr && wa.status() !== 'open') {
-    console.log('[socket] enviando QR cacheado para', socket.id);
-    socket.emit('wa:qr', lastQr);
-  }
+  // ── Workspace: join ──────────────────────────────────────────────────────
+  socket.on('workspace:join', ({ workspaceId }: JoinWorkspacePayload) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) {
+      socket.emit('workspace:error', { message: 'Workspace não encontrado' });
+      return;
+    }
+    socket.join(workspaceId);
+    socket.emit('workspace:joined', ws.info);
+    socket.emit('wa:status', ws.wa.status());
 
-  socket.emit('bootstrap', {
-    contacts: db.allContacts(),
-    messages: db.allMessagesGrouped(),
-    lists: db.allLists(),
+    if (ws.lastQr && ws.wa.status() !== 'open') {
+      socket.emit('wa:qr', ws.lastQr);
+    }
+
+    socket.emit('bootstrap', {
+      contacts: ws.db.allContacts(),
+      messages: ws.db.allMessagesGrouped(),
+      lists:    ws.db.allLists(),
+      workspace: ws.info,
+    });
   });
 
-  socket.on('message:send', async (payload: SendMessagePayload) => {
+  // ── Workspace: create ────────────────────────────────────────────────────
+  socket.on('workspace:create', ({ name }: CreateWorkspacePayload) => {
+    if (!name?.trim()) {
+      socket.emit('workspace:error', { message: 'Nome obrigatório' });
+      return;
+    }
+    const info = wm.create(name.trim());
+    io.emit('workspace:list', wm.list()); // broadcast updated list to everyone
+    socket.join(info.id);
+    socket.emit('workspace:joined', info);
+
+    const ws = wm.get(info.id)!;
+    socket.emit('wa:status', ws.wa.status());
+    socket.emit('bootstrap', {
+      contacts: ws.db.allContacts(),
+      messages: ws.db.allMessagesGrouped(),
+      lists:    ws.db.allLists(),
+      workspace: info,
+    });
+  });
+
+  // ── Workspace: delete ────────────────────────────────────────────────────
+  socket.on('workspace:delete', async ({ workspaceId }: JoinWorkspacePayload) => {
+    await wm.delete(workspaceId);
+    io.emit('workspace:list', wm.list());
+  });
+
+  // ── WhatsApp: manual disconnect ──────────────────────────────────────────
+  socket.on('wa:disconnect', async ({ workspaceId }: { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (ws) await ws.wa.disconnect();
+  });
+
+  // ── WhatsApp: reconnect (re-trigger QR) ─────────────────────────────────
+  socket.on('wa:reconnect', async ({ workspaceId }: { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (ws) await ws.wa.connect();
+  });
+
+  // ── Messages ─────────────────────────────────────────────────────────────
+  socket.on('message:send', async (payload: SendMessagePayload & { workspaceId: string }) => {
+    const ws = wm.get(payload.workspaceId);
+    if (!ws) return;
     try {
-      await pipeline.handleOutbound(payload.contactId, payload.text);
+      await ws.pipeline.handleOutbound(payload.contactId, payload.text);
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unknown error';
       socket.emit('message:error', { contactId: payload.contactId, error: msg });
     }
   });
 
-  socket.on('contact:moveList', ({ contactId, listId }: MoveContactPayload) => {
-    const updated = db.updateContact(contactId, { listId });
-    if (updated) io.emit('contact:updated', updated);
+  // ── Contacts ─────────────────────────────────────────────────────────────
+  socket.on('contact:moveList', ({ workspaceId, contactId, listId }: MoveContactPayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    const updated = ws.db.updateContact(contactId, { listId });
+    if (updated) io.to(workspaceId).emit('contact:updated', updated);
   });
 
-  socket.on('contact:setLang', ({ contactId, lang }: SetLangPayload) => {
-    const updated = db.updateContact(contactId, {
-      currentLang: lang as LangCode,
-      autoDetectLang: false,
-    });
-    if (updated) io.emit('contact:updated', updated);
+  socket.on('contact:setLang', ({ workspaceId, contactId, lang }: SetLangPayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    const updated = ws.db.updateContact(contactId, { currentLang: lang as LangCode, autoDetectLang: false });
+    if (updated) io.to(workspaceId).emit('contact:updated', updated);
   });
 
-  socket.on('list:create', ({ name, color }: ListCreatePayload) => {
-    const list = db.saveList({ name, color });
-    io.emit('list:created', list);
+  socket.on('contact:rename', ({ workspaceId, contactId, name }: RenameContactPayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    const updated = ws.db.updateContact(contactId, { name });
+    if (updated) io.to(workspaceId).emit('contact:updated', updated);
   });
 
-  socket.on('list:rename', ({ listId, name }: ListRenamePayload) => {
-    const list = db.updateList(listId, { name });
-    if (list) io.emit('list:updated', list);
+  socket.on('contact:addNote', ({ workspaceId, contactId, text }: AddNotePayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    const updated = ws.db.addNote(contactId, text);
+    if (updated) io.to(workspaceId).emit('contact:updated', updated);
   });
 
-  socket.on('list:delete', ({ listId }: ListDeletePayload) => {
-    const ok = db.deleteList(listId);
-    if (ok) io.emit('list:deleted', { listId });
+  socket.on('contact:removeNote', ({ workspaceId, contactId, noteId }: RemoveNotePayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    const updated = ws.db.removeNote(contactId, noteId);
+    if (updated) io.to(workspaceId).emit('contact:updated', updated);
   });
 
-  socket.on('chat:read', ({ contactId }: ChatReadPayload) => {
-    db.markRead(contactId);
-    io.emit('contact:updated', db.getContact(contactId));
+  // ── Lists ─────────────────────────────────────────────────────────────────
+  socket.on('list:create', ({ workspaceId, name, color }: ListCreatePayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    const list = ws.db.saveList({ name, color });
+    io.to(workspaceId).emit('list:created', list);
+  });
+
+  socket.on('list:rename', ({ workspaceId, listId, name }: ListRenamePayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    const list = ws.db.updateList(listId, { name });
+    if (list) io.to(workspaceId).emit('list:updated', list);
+  });
+
+  socket.on('list:delete', ({ workspaceId, listId }: ListDeletePayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    const ok = ws.db.deleteList(listId);
+    if (ok) io.to(workspaceId).emit('list:deleted', { listId });
+  });
+
+  // ── Chat read ─────────────────────────────────────────────────────────────
+  socket.on('chat:read', ({ workspaceId, contactId }: ChatReadPayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    ws.db.markRead(contactId);
+    io.to(workspaceId).emit('contact:updated', ws.db.getContact(contactId));
   });
 
   socket.on('disconnect', () => {
-    console.log('[socket] client disconnected:', socket.id);
+    console.log('[socket] disconnected:', socket.id);
   });
 });
 
-async function seedMockData() {
-  const { contacts, messages } = await import('../mock/data.js');
-  contacts.forEach(c => db.seedContact(c));
-  Object.entries(messages).forEach(([contactId, msgs]) => {
-    db.seedMessages(contactId, msgs);
-  });
-}
-
-async function main() {
-  await seedMockData();
-
-  httpServer.listen(PORT, () => {
-    console.log(`[LinguaFlow] Server running on http://localhost:${PORT}`);
-    console.log('[LinguaFlow] Connecting to WhatsApp...');
-  });
-
-  try {
-    await wa.connect();
-  } catch (err) {
-    console.error('[WhatsApp] Failed to connect:', err);
-  }
-}
-
-main();
+httpServer.listen(PORT, () => {
+  console.log(`[LinguaFlow] Server running on http://localhost:${PORT}`);
+  console.log('[LinguaFlow] Multi-workspace mode active');
+});
