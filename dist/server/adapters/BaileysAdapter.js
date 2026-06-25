@@ -126,13 +126,21 @@ export class BaileysAdapter {
         // ── Shared JID resolver (handles @s.whatsapp.net AND @lid) ──────────────
         // lidToPhone is built from contacts that have both @lid and @s.whatsapp.net
         const lidToPhone = new Map(); // "@lid jid" → phone number
+        // Returns a stable identifier for the contact — prefer real phone (@s.whatsapp.net),
+        // fall back to the resolved lid→phone mapping, or store the @lid JID as-is.
         function resolveJid(jid) {
             if (!jid)
                 return null;
             if (jid.endsWith('@s.whatsapp.net'))
                 return jid.replace('@s.whatsapp.net', '');
-            if (jid.endsWith('@lid'))
-                return lidToPhone.get(jid) ?? jid.replace('@lid', '');
+            if (jid.endsWith('@lid')) {
+                // If we have a phone mapping, use the real phone number
+                const phone = lidToPhone.get(jid);
+                if (phone)
+                    return phone;
+                // Otherwise store full @lid JID so we can still send messages
+                return jid;
+            }
             return null; // group, broadcast, etc.
         }
         // ── Sync existing chats (contacts) ────────────────────────────────────
@@ -266,6 +274,7 @@ export class BaileysAdapter {
     async sendMessage(phone, text) {
         if (!this.sock)
             throw new Error('WhatsApp not connected');
+        // phone may be a full JID (1234@lid, 55XX@s.whatsapp.net) or a plain number
         const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
         await this.sock.sendMessage(jid, { text });
     }

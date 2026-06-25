@@ -26,6 +26,11 @@ function initials(name: string) {
   return name.split(' ').slice(0, 2).map(n => n[0]).join('').toUpperCase();
 }
 
+// Strip @lid / @s.whatsapp.net suffixes for display
+function displayPhone(phone: string) {
+  return phone.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '');
+}
+
 function formatTime(ts: number) {
   return new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 }
@@ -616,7 +621,7 @@ function ConversationList() {
                       {LANG_LABELS[contact.currentLang]}
                     </span>
                     <span style={{ fontSize: 11, color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                      {contact.phone}
+                      {displayPhone(contact.phone)}
                     </span>
                     {contact.unread > 0 && (
                       <span style={{
@@ -736,7 +741,7 @@ function ChatWindow() {
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ fontWeight: 700, fontSize: 14, color: '#E5E9F2' }}>{contact.name}</div>
-          <div style={{ fontSize: 11, color: '#64748B' }}>{contact.phone} · {contact.online ? 'online' : 'offline'}</div>
+          <div style={{ fontSize: 11, color: '#64748B' }}>{displayPhone(contact.phone)} · {contact.online ? 'online' : 'offline'}</div>
         </div>
         <span style={{ padding: '4px 12px', borderRadius: 20, background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.25)', color: '#06B6D4', fontSize: 12, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace' }}>
           {LANG_LABELS[contact.currentLang]} {LANG_NAMES[contact.currentLang]}
@@ -881,7 +886,7 @@ function ContactPanel() {
           </div>
         )}
 
-        <div style={{ color: '#64748B', fontSize: 11, marginTop: 4, fontFamily: 'JetBrains Mono, monospace' }}>+{contact.phone}</div>
+        <div style={{ color: '#64748B', fontSize: 11, marginTop: 4, fontFamily: 'JetBrains Mono, monospace' }}>{displayPhone(contact.phone)}</div>
       </div>
 
       {/* Language */}
@@ -1016,7 +1021,7 @@ function ContactPanel() {
         <div style={{ fontSize: 10, fontWeight: 700, color: '#64748B', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Detalhes</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
           {[
-            ['Telefone', `+${contact.phone}`],
+            ['Telefone', displayPhone(contact.phone)],
             ['País', contact.country ?? '—'],
             ['Status', contact.online ? 'Online' : 'Offline'],
             ['Cadastro', new Date(contact.createdAt).toLocaleDateString('pt-BR')],

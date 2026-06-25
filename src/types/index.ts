@@ -18,7 +18,7 @@ export interface Message {
   translatedText: string;
   translatedLang: LangCode;
   translationStatus: TranslationStatus;
-  translationProvider?: 'deepl' | 'openai' | 'google' | 'mock';
+  translationProvider?: 'deepl' | 'openai' | 'google' | 'mymemory' | 'mock';
   timestamp: number;
   delivered?: boolean;
   read?: boolean;

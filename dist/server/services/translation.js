@@ -1,49 +1,53 @@
-import { translate as googleTranslate } from '@vitalets/google-translate-api';
 import OpenAI from 'openai';
-// Google Translate uses ISO 639-1 codes — same as our LangCode, except zh needs 'zh-CN'
-const GOOGLE_LANG = {
-    pt: 'pt', en: 'en', es: 'es', fr: 'fr', de: 'de',
-    it: 'it', ja: 'ja', zh: 'zh-CN', ru: 'ru', ar: 'ar',
+const MYMEMORY_LANG = {
+    pt: 'pt-BR', en: 'en-GB', es: 'es', fr: 'fr', de: 'de',
+    it: 'it', ja: 'ja', zh: 'zh', ru: 'ru', ar: 'ar',
 };
-// Reverse map: google code → LangCode
-const GOOGLE_REVERSE = {
-    pt: 'pt', en: 'en', es: 'es', fr: 'fr', de: 'de',
-    it: 'it', ja: 'ja', zh: 'zh', 'zh-cn': 'zh', ru: 'ru', ar: 'ar',
+// MyMemory returns short lang codes — map back to LangCode
+const MYMEMORY_REVERSE = {
+    pt: 'pt', 'pt-br': 'pt', en: 'en', 'en-gb': 'en', 'en-us': 'en',
+    es: 'es', fr: 'fr', de: 'de', it: 'it', ja: 'ja',
+    zh: 'zh', 'zh-cn': 'zh', ru: 'ru', ar: 'ar',
 };
+async function translateWithMyMemory(text, from, to) {
+    try {
+        const langpair = from === 'auto' ? `${to}` : `${from}|${to}`;
+        const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(langpair)}`;
+        const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
+        if (!resp.ok)
+            return null;
+        const data = await resp.json();
+        if (data.responseStatus !== 200)
+            return null;
+        const translated = data.responseData.translatedText?.trim();
+        if (!translated || translated === text)
+            return null;
+        return { text: translated, detectedLang: data.responseData.detectedLanguage ?? undefined };
+    }
+    catch {
+        return null;
+    }
+}
+// Google Translate via unofficial web API (may be rate-limited on cloud IPs)
+async function translateWithGoogle(text, from, to) {
+    try {
+        const { translate } = await import('@vitalets/google-translate-api');
+        const result = await translate(text, {
+            from: from === 'auto' ? undefined : from,
+            to,
+            fetchOptions: { signal: AbortSignal.timeout(8000) },
+        });
+        return result.text ?? null;
+    }
+    catch {
+        return null;
+    }
+}
 function getOpenAIClient() {
     const key = process.env.OPENAI_API_KEY;
     if (!key)
         return null;
     return new OpenAI({ apiKey: key });
-}
-async function translateWithGoogle(text, from, to) {
-    try {
-        const result = await googleTranslate(text, {
-            from: GOOGLE_LANG[from],
-            to: GOOGLE_LANG[to],
-            fetchOptions: { signal: AbortSignal.timeout(8000) },
-        });
-        return result.text ?? null;
-    }
-    catch (err) {
-        console.error('[Google Translate error]', err instanceof Error ? err.message : err);
-        return null;
-    }
-}
-async function detectWithGoogle(text) {
-    try {
-        const result = await googleTranslate(text, {
-            to: 'en',
-            fetchOptions: { signal: AbortSignal.timeout(6000) },
-        });
-        const detected = result.raw?.src?.toLowerCase();
-        if (!detected)
-            return null;
-        return GOOGLE_REVERSE[detected] ?? null;
-    }
-    catch {
-        return null;
-    }
 }
 async function translateWithOpenAI(text, from, to) {
     const client = getOpenAIClient();
@@ -59,7 +63,7 @@ async function translateWithOpenAI(text, from, to) {
             messages: [
                 {
                     role: 'system',
-                    content: `You are a professional translator. Translate the user's text from ${langNames[from]} to ${langNames[to]}. Return ONLY the translated text, no explanations.`,
+                    content: `Translate from ${langNames[from]} to ${langNames[to]}. Return ONLY the translated text.`,
                 },
                 { role: 'user', content: text },
             ],
@@ -67,8 +71,7 @@ async function translateWithOpenAI(text, from, to) {
         });
         return completion.choices[0]?.message?.content?.trim() ?? null;
     }
-    catch (err) {
-        console.error('[OpenAI translation error]', err instanceof Error ? err.message : err);
+    catch {
         return null;
     }
 }
@@ -77,19 +80,47 @@ export async function translate(opts) {
     if (from === to) {
         return { text, provider: 'mock', ok: true };
     }
-    // Google Translate — free, no key required
-    const google = await translateWithGoogle(text, from, to);
+    const fromCode = MYMEMORY_LANG[from];
+    const toCode = MYMEMORY_LANG[to];
+    // 1. MyMemory (free, reliable on cloud hosts)
+    const mm = await translateWithMyMemory(text, fromCode, toCode);
+    if (mm?.text)
+        return { text: mm.text, provider: 'mymemory', ok: true };
+    // 2. Google Translate (unofficial, may fail on cloud IPs)
+    const google = await translateWithGoogle(text, fromCode, toCode);
     if (google)
         return { text: google, provider: 'google', ok: true };
-    // OpenAI fallback — only if key is configured
+    // 3. OpenAI (only if key is configured)
     const openai = await translateWithOpenAI(text, from, to);
     if (openai)
         return { text: openai, provider: 'openai', ok: true };
-    // Both failed — pass through original
-    console.error(`[translation] All providers failed: ${from} → ${to}: "${text.slice(0, 40)}"`);
+    // All failed
+    console.error(`[translation] All providers failed: ${from}→${to}: "${text.slice(0, 40)}"`);
     return { text, provider: 'mock', ok: false };
 }
 export async function detectLang(text) {
-    const detected = await detectWithGoogle(text);
-    return detected ?? 'en';
+    // Use MyMemory — translate to EN and it returns the detected lang
+    try {
+        const result = await translateWithMyMemory(text, 'auto', 'en-GB');
+        if (result?.detectedLang) {
+            const code = result.detectedLang.toLowerCase().split('-')[0];
+            return (MYMEMORY_REVERSE[result.detectedLang.toLowerCase()] ?? MYMEMORY_REVERSE[code]) ?? 'en';
+        }
+    }
+    catch { }
+    // Fallback: Google
+    try {
+        const { translate } = await import('@vitalets/google-translate-api');
+        const result = await translate(text, { to: 'en', fetchOptions: { signal: AbortSignal.timeout(6000) } });
+        const detected = result.raw?.src?.toLowerCase();
+        if (detected) {
+            const map = {
+                pt: 'pt', en: 'en', es: 'es', fr: 'fr', de: 'de',
+                it: 'it', ja: 'ja', zh: 'zh', 'zh-cn': 'zh', ru: 'ru', ar: 'ar',
+            };
+            return map[detected] ?? 'en';
+        }
+    }
+    catch { }
+    return 'en';
 }
