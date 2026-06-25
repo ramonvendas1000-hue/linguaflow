@@ -4,7 +4,7 @@ services:
     env: node
     region: oregon
     plan: free
-    buildCommand: export NODE_ENV=development && npm install && cd client && npm install && npm run build && cd .. && npx tsc
+    buildCommand: npm install && npx tsc
     startCommand: NODE_ENV=production npm start
     envVars:
       - key: DEEPL_API_KEY

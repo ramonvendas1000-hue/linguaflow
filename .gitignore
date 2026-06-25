@@ -5,6 +5,5 @@ dist/
 *.log
 .DS_Store
 client/node_modules/
-client/dist/
 
 .vercel
