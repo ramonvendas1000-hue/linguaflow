@@ -104,7 +104,9 @@ async function translateWithOpenAI(text: string, from: LangCode, to: LangCode): 
       max_tokens: 500,
     });
     return completion.choices[0]?.message?.content?.trim() ?? null;
-  } catch {
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error('[OpenAI translation error]', msg);
     return null;
   }
 }

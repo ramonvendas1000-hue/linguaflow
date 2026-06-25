@@ -81,7 +81,9 @@ async function translateWithOpenAI(text, from, to) {
         });
         return completion.choices[0]?.message?.content?.trim() ?? null;
     }
-    catch {
+    catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        console.error('[OpenAI translation error]', msg);
         return null;
     }
 }
