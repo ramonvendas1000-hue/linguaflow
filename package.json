@@ -12,12 +12,13 @@
     "install:all": "npm install && cd client && npm install"
   },
   "dependencies": {
-    "@whiskeysockets/baileys": "^6.7.16",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/node": "^22.10.7",
     "@types/qrcode": "^1.5.5",
     "@types/uuid": "^10.0.0",
+    "@vitalets/google-translate-api": "^9.2.1",
+    "@whiskeysockets/baileys": "^6.7.16",
     "axios": "^1.7.9",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",

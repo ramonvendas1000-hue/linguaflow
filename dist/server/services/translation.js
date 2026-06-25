@@ -1,59 +1,45 @@
-import axios from 'axios';
+import { translate as googleTranslate } from '@vitalets/google-translate-api';
 import OpenAI from 'openai';
-const DEEPL_MAP = {
-    pt: 'PT-BR',
-    en: 'EN-US',
-    es: 'ES',
-    fr: 'FR',
-    de: 'DE',
-    it: 'IT',
-    ja: 'JA',
-    zh: 'ZH',
-    ru: 'RU',
-    ar: 'AR',
+// Google Translate uses ISO 639-1 codes — same as our LangCode, except zh needs 'zh-CN'
+const GOOGLE_LANG = {
+    pt: 'pt', en: 'en', es: 'es', fr: 'fr', de: 'de',
+    it: 'it', ja: 'ja', zh: 'zh-CN', ru: 'ru', ar: 'ar',
 };
-const DEEPL_REVERSE = Object.fromEntries(Object.entries(DEEPL_MAP).map(([k, v]) => [v, k]));
-function getDeeplKey() {
-    return process.env.DEEPL_API_KEY;
-}
+// Reverse map: google code → LangCode
+const GOOGLE_REVERSE = {
+    pt: 'pt', en: 'en', es: 'es', fr: 'fr', de: 'de',
+    it: 'it', ja: 'ja', zh: 'zh', 'zh-cn': 'zh', ru: 'ru', ar: 'ar',
+};
 function getOpenAIClient() {
     const key = process.env.OPENAI_API_KEY;
     if (!key)
         return null;
     return new OpenAI({ apiKey: key });
 }
-async function translateWithDeepl(text, from, to) {
-    const key = getDeeplKey();
-    if (!key)
-        return null;
-    const baseUrl = key.endsWith(':fx')
-        ? 'https://api-free.deepl.com/v2'
-        : 'https://api.deepl.com/v2';
+async function translateWithGoogle(text, from, to) {
     try {
-        const res = await axios.post(`${baseUrl}/translate`, new URLSearchParams({
-            text,
-            source_lang: DEEPL_MAP[from].split('-')[0],
-            target_lang: DEEPL_MAP[to],
-        }), { headers: { Authorization: `DeepL-Auth-Key ${key}` }, timeout: 8000 });
-        return res.data.translations?.[0]?.text ?? null;
+        const result = await googleTranslate(text, {
+            from: GOOGLE_LANG[from],
+            to: GOOGLE_LANG[to],
+            fetchOptions: { signal: AbortSignal.timeout(8000) },
+        });
+        return result.text ?? null;
     }
-    catch {
+    catch (err) {
+        console.error('[Google Translate error]', err instanceof Error ? err.message : err);
         return null;
     }
 }
-async function detectWithDeepl(text) {
-    const key = getDeeplKey();
-    if (!key)
-        return null;
-    const baseUrl = key.endsWith(':fx')
-        ? 'https://api-free.deepl.com/v2'
-        : 'https://api.deepl.com/v2';
+async function detectWithGoogle(text) {
     try {
-        const res = await axios.post(`${baseUrl}/translate`, new URLSearchParams({ text, target_lang: 'EN-US' }), { headers: { Authorization: `DeepL-Auth-Key ${key}` }, timeout: 6000 });
-        const detected = res.data.translations?.[0]?.detected_source_language;
+        const result = await googleTranslate(text, {
+            to: 'en',
+            fetchOptions: { signal: AbortSignal.timeout(6000) },
+        });
+        const detected = result.raw?.src?.toLowerCase();
         if (!detected)
             return null;
-        return DEEPL_REVERSE[detected] ?? DEEPL_REVERSE[detected + '-US'] ?? null;
+        return GOOGLE_REVERSE[detected] ?? null;
     }
     catch {
         return null;
@@ -82,8 +68,7 @@ async function translateWithOpenAI(text, from, to) {
         return completion.choices[0]?.message?.content?.trim() ?? null;
     }
     catch (err) {
-        const msg = err instanceof Error ? err.message : String(err);
-        console.error('[OpenAI translation error]', msg);
+        console.error('[OpenAI translation error]', err instanceof Error ? err.message : err);
         return null;
     }
 }
@@ -92,20 +77,19 @@ export async function translate(opts) {
     if (from === to) {
         return { text, provider: 'mock', ok: true };
     }
-    const hasAnyKey = !!getDeeplKey() || !!process.env.OPENAI_API_KEY;
-    // No translation service configured — pass through rather than block
-    if (!hasAnyKey) {
-        return { text, provider: 'mock', ok: true };
-    }
-    const deepl = await translateWithDeepl(text, from, to);
-    if (deepl)
-        return { text: deepl, provider: 'deepl', ok: true };
+    // Google Translate — free, no key required
+    const google = await translateWithGoogle(text, from, to);
+    if (google)
+        return { text: google, provider: 'google', ok: true };
+    // OpenAI fallback — only if key is configured
     const openai = await translateWithOpenAI(text, from, to);
     if (openai)
         return { text: openai, provider: 'openai', ok: true };
+    // Both failed — pass through original
+    console.error(`[translation] All providers failed: ${from} → ${to}: "${text.slice(0, 40)}"`);
     return { text, provider: 'mock', ok: false };
 }
 export async function detectLang(text) {
-    const detected = await detectWithDeepl(text);
+    const detected = await detectWithGoogle(text);
     return detected ?? 'en';
 }
