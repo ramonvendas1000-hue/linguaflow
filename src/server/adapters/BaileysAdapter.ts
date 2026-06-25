@@ -147,7 +147,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
       let discovered = 0;
       for (const chat of chats) {
         const jid = chat.id ?? '';
-        if (jid.includes('@g.us') || jid.includes('@broadcast')) continue;
+        if (!jid.endsWith('@s.whatsapp.net')) continue; // only real phone JIDs
         const phone = jid.replace('@s.whatsapp.net', '');
         if (!phone) continue;
         this.emit('contact', { phone, name: chat.name ?? undefined });
@@ -160,7 +160,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
     this.sock.ev.on('contacts.upsert', (contacts) => {
       for (const c of contacts) {
         const jid = c.id ?? '';
-        if (jid.includes('@g.us') || jid.includes('@broadcast')) continue;
+        if (!jid.endsWith('@s.whatsapp.net')) continue;
         const phone = jid.replace('@s.whatsapp.net', '');
         if (!phone) continue;
         const name = c.name ?? c.notify ?? undefined;
@@ -188,7 +188,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
         if (!text) continue;
 
         const remoteJid = msg.key.remoteJid ?? '';
-        if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast')) continue;
+        if (!remoteJid.endsWith('@s.whatsapp.net')) continue; // only real phone JIDs
 
         const fromPhone = remoteJid.replace('@s.whatsapp.net', '');
         if (!fromPhone) continue;
@@ -223,7 +223,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
         if (!text) continue;
 
         const remoteJid = msg.key.remoteJid ?? '';
-        if (remoteJid.includes('@g.us')) continue;
+        if (!remoteJid.endsWith('@s.whatsapp.net')) continue;
 
         const fromPhone  = remoteJid.replace('@s.whatsapp.net', '');
         const fromName   = msg.pushName ?? undefined;

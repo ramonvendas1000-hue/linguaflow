@@ -120,8 +120,8 @@ export class BaileysAdapter {
             let discovered = 0;
             for (const chat of chats) {
                 const jid = chat.id ?? '';
-                if (jid.includes('@g.us') || jid.includes('@broadcast'))
-                    continue;
+                if (!jid.endsWith('@s.whatsapp.net'))
+                    continue; // only real phone JIDs
                 const phone = jid.replace('@s.whatsapp.net', '');
                 if (!phone)
                     continue;
@@ -135,7 +135,7 @@ export class BaileysAdapter {
         this.sock.ev.on('contacts.upsert', (contacts) => {
             for (const c of contacts) {
                 const jid = c.id ?? '';
-                if (jid.includes('@g.us') || jid.includes('@broadcast'))
+                if (!jid.endsWith('@s.whatsapp.net'))
                     continue;
                 const phone = jid.replace('@s.whatsapp.net', '');
                 if (!phone)
@@ -161,8 +161,8 @@ export class BaileysAdapter {
                 if (!text)
                     continue;
                 const remoteJid = msg.key.remoteJid ?? '';
-                if (remoteJid.includes('@g.us') || remoteJid.includes('@broadcast'))
-                    continue;
+                if (!remoteJid.endsWith('@s.whatsapp.net'))
+                    continue; // only real phone JIDs
                 const fromPhone = remoteJid.replace('@s.whatsapp.net', '');
                 if (!fromPhone)
                     continue;
@@ -193,7 +193,7 @@ export class BaileysAdapter {
                 if (!text)
                     continue;
                 const remoteJid = msg.key.remoteJid ?? '';
-                if (remoteJid.includes('@g.us'))
+                if (!remoteJid.endsWith('@s.whatsapp.net'))
                     continue;
                 const fromPhone = remoteJid.replace('@s.whatsapp.net', '');
                 const fromName = msg.pushName ?? undefined;
