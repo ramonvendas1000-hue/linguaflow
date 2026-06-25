@@ -12,12 +12,18 @@ export class MessagePipeline {
     broadcast(event, data) {
         this.io.to(this.workspaceId).emit(event, data);
     }
+    cleanPhone(phone) {
+        return phone.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '');
+    }
     // Called by chats.set / contacts.set — ensures contact exists without a message
     handleContactDiscovery(raw) {
+        const cleanName = raw.name
+            ? raw.name
+            : this.cleanPhone(raw.phone); // use stripped number as fallback name
         let contact = this.db.getContactByPhone(raw.phone);
         if (!contact) {
             contact = this.db.saveContact({
-                name: raw.name ?? raw.phone,
+                name: cleanName,
                 phone: raw.phone,
                 currentLang: 'pt',
                 autoDetectLang: true,
@@ -26,10 +32,14 @@ export class MessagePipeline {
             });
             this.broadcast('contact:updated', contact);
         }
-        else if (raw.name && raw.name !== contact.name && raw.name !== raw.phone) {
-            const updated = this.db.updateContact(contact.id, { name: raw.name });
-            if (updated)
-                this.broadcast('contact:updated', updated);
+        else {
+            // Update name if we have a better one
+            const currentIsDefault = contact.name === this.cleanPhone(contact.phone) || contact.name === contact.phone;
+            if (raw.name && (currentIsDefault || !contact.name)) {
+                const updated = this.db.updateContact(contact.id, { name: raw.name });
+                if (updated)
+                    this.broadcast('contact:updated', updated);
+            }
         }
     }
     // Historical outbound messages (fromMe=true) — show in thread without re-sending
@@ -39,7 +49,7 @@ export class MessagePipeline {
         let contact = this.db.getContactByPhone(raw.fromPhone);
         if (!contact) {
             contact = this.db.saveContact({
-                name: raw.fromPhone,
+                name: raw.fromName ?? this.cleanPhone(raw.fromPhone),
                 phone: raw.fromPhone,
                 currentLang: 'pt',
                 autoDetectLang: true,
@@ -71,13 +81,22 @@ export class MessagePipeline {
         let contact = this.db.getContactByPhone(raw.fromPhone);
         if (!contact) {
             contact = this.db.saveContact({
-                name: raw.fromName ?? raw.fromPhone,
+                name: raw.fromName ?? this.cleanPhone(raw.fromPhone),
                 phone: raw.fromPhone,
                 currentLang: 'pt',
                 autoDetectLang: true,
                 listId: 'list_incoming',
                 online: true,
             });
+        }
+        else if (raw.fromName) {
+            // Update name with pushName if still using default lid-based name
+            const currentIsDefault = contact.name === this.cleanPhone(contact.phone) || contact.name === contact.phone;
+            if (currentIsDefault) {
+                const updated = this.db.updateContact(contact.id, { name: raw.fromName });
+                if (updated)
+                    contact = updated;
+            }
         }
         const detectedLang = contact.autoDetectLang
             ? await detectLang(raw.text)

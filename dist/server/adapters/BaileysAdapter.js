@@ -180,7 +180,7 @@ export class BaileysAdapter {
         this.sock.ev.on('messaging-history.set', ({ messages: histMsgs, chats: histChats, contacts: histContacts, isLatest }) => {
             const cutoff = Date.now() - HISTORY_WINDOW_MS;
             let synced = 0;
-            logEvent('messaging-history.set', `msgs=${histMsgs?.length}, chats=${histChats?.length ?? 0}, contacts=${histContacts?.length ?? 0}, isLatest=${isLatest}`);
+            logEvent('messaging-history.set', `msgs=${histMsgs?.length}, chats=${histChats?.length ?? 0}, contacts=${histContacts?.length ?? 0}, isLatest=${isLatest}, contactSample=${JSON.stringify(histContacts?.slice(0, 3).map(c => ({ id: c.id, lid: c.lid, name: c.name, notify: c.notify })))}`);
             // First pass: build lid → phone map from contacts
             for (const c of histContacts ?? []) {
                 const jid = c.id ?? '';
