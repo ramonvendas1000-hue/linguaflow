@@ -120,6 +120,13 @@ export async function translate(opts: {
     return { text, provider: 'mock', ok: true };
   }
 
+  const hasAnyKey = !!getDeeplKey() || !!process.env.OPENAI_API_KEY;
+
+  // No translation service configured — pass through rather than block
+  if (!hasAnyKey) {
+    return { text, provider: 'mock', ok: true };
+  }
+
   const deepl = await translateWithDeepl(text, from, to);
   if (deepl) return { text: deepl, provider: 'deepl', ok: true };
 
