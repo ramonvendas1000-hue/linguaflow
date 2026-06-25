@@ -1,0 +1,33 @@
+[build]
+
+[deploy]
+  strategy = "immediate"
+
+app = "linguaflow-app"
+primary_region = "gru"
+
+[env]
+  PORT = "4000"
+  NODE_ENV = "production"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 4000
+
+  [[services.ports]]
+    port = 80
+    handlers = ["http"]
+
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+
+  [[services.tcp_checks]]
+    grace_period = "10s"
+    interval = "15s"
+    restart_limit = 0
+    timeout = "2s"
+
+[mounts]
+  source = "wa_sessions"
+  destination = "/app/.wa-sessions"
