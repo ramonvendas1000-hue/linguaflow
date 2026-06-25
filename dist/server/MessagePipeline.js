@@ -19,7 +19,7 @@ export class MessagePipeline {
             contact = this.db.saveContact({
                 name: raw.name ?? raw.phone,
                 phone: raw.phone,
-                currentLang: 'en',
+                currentLang: 'pt',
                 autoDetectLang: true,
                 listId: 'list_incoming',
                 online: false,
@@ -41,7 +41,7 @@ export class MessagePipeline {
             contact = this.db.saveContact({
                 name: raw.fromPhone,
                 phone: raw.fromPhone,
-                currentLang: 'en',
+                currentLang: 'pt',
                 autoDetectLang: true,
                 listId: 'list_incoming',
                 online: false,
@@ -73,7 +73,7 @@ export class MessagePipeline {
             contact = this.db.saveContact({
                 name: raw.fromName ?? raw.fromPhone,
                 phone: raw.fromPhone,
-                currentLang: 'en',
+                currentLang: 'pt',
                 autoDetectLang: true,
                 listId: 'list_incoming',
                 online: true,

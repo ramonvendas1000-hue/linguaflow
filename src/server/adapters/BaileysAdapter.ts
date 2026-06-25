@@ -169,11 +169,30 @@ export class BaileysAdapter implements WhatsAppAdapter {
     });
 
     // ── Sync message history (last 30 days) ───────────────────────────────
-    this.sock.ev.on('messaging-history.set', ({ messages: histMsgs, isLatest }) => {
+    this.sock.ev.on('messaging-history.set', ({ messages: histMsgs, chats: histChats, contacts: histContacts, isLatest }) => {
       const cutoff = Date.now() - HISTORY_WINDOW_MS;
       let synced = 0;
 
-      console.log(`[Baileys] messaging-history.set: ${histMsgs.length} msgs, isLatest=${isLatest}`);
+      console.log(`[Baileys] messaging-history.set: ${histMsgs.length} msgs, ${histChats?.length ?? 0} chats, ${histContacts?.length ?? 0} contacts, isLatest=${isLatest}`);
+
+      // Extract contacts from address book
+      for (const c of histContacts ?? []) {
+        const jid = c.id ?? '';
+        if (!jid.endsWith('@s.whatsapp.net')) continue;
+        const phone = jid.replace('@s.whatsapp.net', '');
+        if (!phone) continue;
+        const name = c.name ?? c.notify ?? undefined;
+        this.emit('contact', { phone, name });
+      }
+
+      // Extract contacts from chats list
+      for (const chat of histChats ?? []) {
+        const jid = chat.id ?? '';
+        if (!jid.endsWith('@s.whatsapp.net')) continue;
+        const phone = jid.replace('@s.whatsapp.net', '');
+        if (!phone) continue;
+        this.emit('contact', { phone, name: chat.name ?? undefined });
+      }
 
       for (const msg of histMsgs) {
         if (!msg.message) continue;
@@ -211,7 +230,8 @@ export class BaileysAdapter implements WhatsAppAdapter {
 
     // ── Live messages ────────────────────────────────────────────────────
     this.sock.ev.on('messages.upsert', ({ messages, type }) => {
-      if (type !== 'notify') return;
+      // 'notify' = live message; 'append' = WA Web also sends new msgs as append sometimes
+      if (type !== 'notify' && type !== 'append') return;
 
       for (const msg of messages) {
         if (!msg.message) continue;

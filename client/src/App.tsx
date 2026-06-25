@@ -455,7 +455,7 @@ function TopBar({ onQrClick, onLeave }: { onQrClick: () => void; onLeave: () => 
         background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.25)',
         color: '#06B6D4', fontSize: 11, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace',
       }}>
-        DeepL + GPT-4o
+        Google Translate
       </div>
 
       <motion.button
