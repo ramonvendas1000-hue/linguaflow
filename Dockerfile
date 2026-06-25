@@ -1,19 +1,12 @@
-FROM node:20-alpine
+FROM node:20-slim
 
 WORKDIR /app
 
-# Install root deps
 COPY package*.json ./
 RUN npm install
 
-# Build client
-COPY client/package*.json ./client/
-RUN cd client && npm install
-
 COPY . .
-RUN cd client && npm run build
 
-# Compile server TypeScript
 RUN npx tsc
 
 EXPOSE 4000
