@@ -13,6 +13,14 @@ type EventCallback<T> = (data: T) => void;
 
 const HISTORY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 
+// Shared event log accessible for debug
+export const eventLog: { ts: number; event: string; detail: string }[] = [];
+function logEvent(event: string, detail: string) {
+  eventLog.push({ ts: Date.now(), event, detail });
+  if (eventLog.length > 200) eventLog.shift();
+  console.log(`[Baileys] ${event}: ${detail}`);
+}
+
 export class BaileysAdapter implements WhatsAppAdapter {
   private sock: ReturnType<typeof makeWASocket> | null = null;
   private currentStatus: WaStatusValue = 'close';
@@ -104,13 +112,13 @@ export class BaileysAdapter implements WhatsAppAdapter {
       const { connection, lastDisconnect, qr } = update;
 
       if (qr) {
-        console.log('[Baileys] QR gerado');
+        logEvent('qr', 'QR gerado');
         const dataUrl = await qrcode.toDataURL(qr);
         this.emit('qr', dataUrl);
       }
 
       if (connection === 'open') {
-        console.log('[Baileys] ✅ WhatsApp conectado!');
+        logEvent('connection', 'OPEN — WhatsApp conectado!');
         this.currentStatus = 'open';
         this.emit('status', 'open');
       }
@@ -122,7 +130,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
 
       if (connection === 'close') {
         const statusCode = (lastDisconnect?.error as Boom)?.output?.statusCode;
-        console.log('[Baileys] Conexão fechada. Código:', statusCode);
+        logEvent('connection', `CLOSE code=${statusCode}`);
         this.currentStatus = 'close';
         this.emit('status', 'close');
 
@@ -144,20 +152,22 @@ export class BaileysAdapter implements WhatsAppAdapter {
 
     // ── Sync existing chats (contacts) ────────────────────────────────────
     this.sock.ev.on('chats.upsert', (chats) => {
+      logEvent('chats.upsert', `total=${chats.length}, sample=${JSON.stringify(chats.slice(0,2).map(c => c.id))}`);
       let discovered = 0;
       for (const chat of chats) {
         const jid = chat.id ?? '';
-        if (!jid.endsWith('@s.whatsapp.net')) continue; // only real phone JIDs
+        if (!jid.endsWith('@s.whatsapp.net')) continue;
         const phone = jid.replace('@s.whatsapp.net', '');
         if (!phone) continue;
         this.emit('contact', { phone, name: chat.name ?? undefined });
         discovered++;
       }
-      if (discovered > 0) console.log(`[Baileys] ${discovered} contatos via chats.upsert`);
+      logEvent('chats.upsert', `discovered ${discovered} phone contacts`);
     });
 
     // ── Sync existing contacts from WA address book ───────────────────────
     this.sock.ev.on('contacts.upsert', (contacts) => {
+      logEvent('contacts.upsert', `total=${contacts.length}`);
       for (const c of contacts) {
         const jid = c.id ?? '';
         if (!jid.endsWith('@s.whatsapp.net')) continue;
@@ -173,7 +183,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
       const cutoff = Date.now() - HISTORY_WINDOW_MS;
       let synced = 0;
 
-      console.log(`[Baileys] messaging-history.set: ${histMsgs.length} msgs, ${histChats?.length ?? 0} chats, ${histContacts?.length ?? 0} contacts, isLatest=${isLatest}`);
+      logEvent('messaging-history.set', `msgs=${histMsgs?.length}, chats=${histChats?.length ?? 0}, contacts=${histContacts?.length ?? 0}, isLatest=${isLatest}`);
 
       // Extract contacts from address book
       for (const c of histContacts ?? []) {
@@ -223,9 +233,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
         synced++;
       }
 
-      if (synced > 0) {
-        console.log(`[Baileys] Sincronizadas ${synced} mensagens do histórico`);
-      }
+      logEvent('messaging-history.set', `synced ${synced} messages to DB`);
     });
 
     // ── Live messages ────────────────────────────────────────────────────

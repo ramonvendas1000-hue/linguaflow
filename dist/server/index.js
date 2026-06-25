@@ -6,6 +6,7 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WorkspaceManager } from './WorkspaceManager.js';
+import { eventLog } from './adapters/BaileysAdapter.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT) || 4000;
 const app = express();
@@ -30,7 +31,7 @@ app.get('/api/debug', (_req, res) => {
             contactList: contacts.map(c => ({ name: c.name, phone: c.phone, lang: c.currentLang })),
         };
     });
-    res.json({ workspaces, uptime: process.uptime(), ts: Date.now() });
+    res.json({ workspaces, uptime: process.uptime(), ts: Date.now(), cwd: process.cwd(), events: eventLog.slice(-50) });
 });
 app.get('*', (_req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
