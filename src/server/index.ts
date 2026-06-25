@@ -37,6 +37,16 @@ const clientDist = path.resolve(__dirname, '../../client/dist');
 app.use(express.static(clientDist));
 
 // Debug endpoint — shows current server state
+// Test translation endpoint
+app.get('/api/test-translation', async (req, res) => {
+  const { translate } = await import('./services/translation.js');
+  const text = String(req.query.text ?? 'Olá, tudo bem?');
+  const from = (req.query.from ?? 'pt') as 'pt';
+  const to   = (req.query.to   ?? 'en') as 'en';
+  const result = await translate({ text, from, to });
+  res.json(result);
+});
+
 app.get('/api/debug', (_req, res) => {
   const workspaces = wm.list().map(info => {
     const ws = wm.get(info.id)!;

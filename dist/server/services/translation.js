@@ -11,7 +11,7 @@ const MYMEMORY_REVERSE = {
 };
 async function translateWithMyMemory(text, from, to) {
     try {
-        const langpair = from === 'auto' ? `${to}` : `${from}|${to}`;
+        const langpair = (from === 'auto' || from === 'AUTODETECT') ? `AUTODETECT|${to}` : `${from}|${to}`;
         const url = `https://api.mymemory.translated.net/get?q=${encodeURIComponent(text)}&langpair=${encodeURIComponent(langpair)}`;
         const resp = await fetch(url, { signal: AbortSignal.timeout(10000) });
         if (!resp.ok)
@@ -101,7 +101,7 @@ export async function translate(opts) {
 export async function detectLang(text) {
     // Use MyMemory — translate to EN and it returns the detected lang
     try {
-        const result = await translateWithMyMemory(text, 'auto', 'en-GB');
+        const result = await translateWithMyMemory(text, 'AUTODETECT', 'en-GB');
         if (result?.detectedLang) {
             const code = result.detectedLang.toLowerCase().split('-')[0];
             return (MYMEMORY_REVERSE[result.detectedLang.toLowerCase()] ?? MYMEMORY_REVERSE[code]) ?? 'en';
