@@ -101,11 +101,15 @@ export class MessagePipeline {
         online: true,
       });
     } else if (raw.fromName) {
-      // Update name with pushName if still using default lid-based name
-      const currentIsDefault = contact.name === this.cleanPhone(contact.phone) || contact.name === contact.phone;
+      // Update name with pushName whenever available and current name is a lid-based default
+      const cleanId = this.cleanPhone(contact.phone);
+      const currentIsDefault = contact.name === cleanId || contact.name === contact.phone || contact.name === `${cleanId}@lid`;
       if (currentIsDefault) {
-        const updated = this.db.updateContact(contact.id, { name: raw.fromName });
-        if (updated) contact = updated;
+        const updated = this.db.updateContact(contact.id, { name: raw.fromName, online: true });
+        if (updated) {
+          contact = updated;
+          this.broadcast('contact:updated', updated);
+        }
       }
     }
 

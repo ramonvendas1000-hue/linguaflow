@@ -205,6 +205,25 @@ export class BaileysAdapter {
                     continue;
                 this.emit('contact', { phone, name: chat.name ?? undefined });
             }
+            // Build pushName map from inbound messages (only way to get contact names from @lid)
+            const lidToName = new Map();
+            for (const msg of histMsgs) {
+                if (!msg.key.fromMe && msg.pushName) {
+                    const jid = msg.key.remoteJid ?? '';
+                    if (!lidToName.has(jid))
+                        lidToName.set(jid, msg.pushName);
+                }
+            }
+            logEvent('messaging-history.set', `pushName map: ${lidToName.size} entries`);
+            // Re-emit contacts now that we have names from pushName
+            for (const chat of histChats ?? []) {
+                const jid = chat.id ?? '';
+                const phone = resolveJid(jid);
+                if (!phone)
+                    continue;
+                const name = chat.name ?? lidToName.get(jid) ?? undefined;
+                this.emit('contact', { phone, name });
+            }
             // Sync messages
             for (const msg of histMsgs) {
                 if (!msg.message)
@@ -217,13 +236,16 @@ export class BaileysAdapter {
                     null;
                 if (!text)
                     continue;
-                const fromPhone = resolveJid(msg.key.remoteJid ?? '');
+                const remoteJid = msg.key.remoteJid ?? '';
+                const fromPhone = resolveJid(remoteJid);
                 if (!fromPhone)
                     continue;
+                // Use pushName for inbound; for outbound fromMe msgs no pushName exists
+                const fromName = msg.key.fromMe ? undefined : (msg.pushName ?? lidToName.get(remoteJid));
                 this.emit('message', {
                     waMessageId: msg.key.id ?? `hist_${ts}_${synced}`,
                     fromPhone,
-                    fromName: undefined,
+                    fromName: fromName ?? undefined,
                     text,
                     timestamp: ts,
                     fromMe: msg.key.fromMe ?? false,
