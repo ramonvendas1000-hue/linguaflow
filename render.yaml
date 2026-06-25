@@ -4,13 +4,11 @@ services:
     env: node
     region: oregon
     plan: free
-    buildCommand: npm run build
+    buildCommand: npm install --include=dev && cd client && npm install && npm run build && cd .. && npx tsc
     startCommand: npm start
     envVars:
       - key: NODE_ENV
         value: production
-      - key: PORT
-        value: 10000
       - key: DEEPL_API_KEY
         sync: false
       - key: OPENAI_API_KEY
