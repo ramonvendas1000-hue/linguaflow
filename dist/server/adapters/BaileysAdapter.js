@@ -123,30 +123,45 @@ export class BaileysAdapter {
                 this.reconnectTimer = setTimeout(() => this.connect(), delay);
             }
         });
+        // ── Shared JID resolver (handles @s.whatsapp.net AND @lid) ──────────────
+        // lidToPhone is built from contacts that have both @lid and @s.whatsapp.net
+        const lidToPhone = new Map(); // "@lid jid" → phone number
+        function resolveJid(jid) {
+            if (!jid)
+                return null;
+            if (jid.endsWith('@s.whatsapp.net'))
+                return jid.replace('@s.whatsapp.net', '');
+            if (jid.endsWith('@lid'))
+                return lidToPhone.get(jid) ?? jid.replace('@lid', '');
+            return null; // group, broadcast, etc.
+        }
         // ── Sync existing chats (contacts) ────────────────────────────────────
         this.sock.ev.on('chats.upsert', (chats) => {
-            logEvent('chats.upsert', `total=${chats.length}, sample=${JSON.stringify(chats.slice(0, 2).map(c => c.id))}`);
+            logEvent('chats.upsert', `total=${chats.length}, sample=${JSON.stringify(chats.slice(0, 3).map(c => c.id))}`);
             let discovered = 0;
             for (const chat of chats) {
-                const jid = chat.id ?? '';
-                if (!jid.endsWith('@s.whatsapp.net'))
-                    continue;
-                const phone = jid.replace('@s.whatsapp.net', '');
+                const phone = resolveJid(chat.id ?? '');
                 if (!phone)
                     continue;
                 this.emit('contact', { phone, name: chat.name ?? undefined });
                 discovered++;
             }
-            logEvent('chats.upsert', `discovered ${discovered} phone contacts`);
+            logEvent('chats.upsert', `discovered ${discovered} contacts`);
         });
         // ── Sync existing contacts from WA address book ───────────────────────
         this.sock.ev.on('contacts.upsert', (contacts) => {
             logEvent('contacts.upsert', `total=${contacts.length}`);
+            // First pass: build lid → phone map
             for (const c of contacts) {
                 const jid = c.id ?? '';
-                if (!jid.endsWith('@s.whatsapp.net'))
-                    continue;
-                const phone = jid.replace('@s.whatsapp.net', '');
+                if (jid.endsWith('@s.whatsapp.net') && c.lid) {
+                    const lidStr = String(c.lid);
+                    lidToPhone.set(lidStr.includes('@') ? lidStr : `${lidStr}@lid`, jid.replace('@s.whatsapp.net', ''));
+                }
+            }
+            // Second pass: emit contacts
+            for (const c of contacts) {
+                const phone = resolveJid(c.id ?? '');
                 if (!phone)
                     continue;
                 const name = c.name ?? c.notify ?? undefined;
@@ -158,27 +173,31 @@ export class BaileysAdapter {
             const cutoff = Date.now() - HISTORY_WINDOW_MS;
             let synced = 0;
             logEvent('messaging-history.set', `msgs=${histMsgs?.length}, chats=${histChats?.length ?? 0}, contacts=${histContacts?.length ?? 0}, isLatest=${isLatest}`);
-            // Extract contacts from address book
+            // First pass: build lid → phone map from contacts
             for (const c of histContacts ?? []) {
                 const jid = c.id ?? '';
-                if (!jid.endsWith('@s.whatsapp.net'))
-                    continue;
-                const phone = jid.replace('@s.whatsapp.net', '');
+                if (jid.endsWith('@s.whatsapp.net') && c.lid) {
+                    const lidStr = String(c.lid);
+                    lidToPhone.set(lidStr.includes('@') ? lidStr : `${lidStr}@lid`, jid.replace('@s.whatsapp.net', ''));
+                }
+            }
+            logEvent('messaging-history.set', `lid map size: ${lidToPhone.size}`);
+            // Emit contacts from address book
+            for (const c of histContacts ?? []) {
+                const phone = resolveJid(c.id ?? '');
                 if (!phone)
                     continue;
                 const name = c.name ?? c.notify ?? undefined;
                 this.emit('contact', { phone, name });
             }
-            // Extract contacts from chats list
+            // Emit contacts from chats
             for (const chat of histChats ?? []) {
-                const jid = chat.id ?? '';
-                if (!jid.endsWith('@s.whatsapp.net'))
-                    continue;
-                const phone = jid.replace('@s.whatsapp.net', '');
+                const phone = resolveJid(chat.id ?? '');
                 if (!phone)
                     continue;
                 this.emit('contact', { phone, name: chat.name ?? undefined });
             }
+            // Sync messages
             for (const msg of histMsgs) {
                 if (!msg.message)
                     continue;
@@ -190,10 +209,7 @@ export class BaileysAdapter {
                     null;
                 if (!text)
                     continue;
-                const remoteJid = msg.key.remoteJid ?? '';
-                if (!remoteJid.endsWith('@s.whatsapp.net'))
-                    continue; // only real phone JIDs
-                const fromPhone = remoteJid.replace('@s.whatsapp.net', '');
+                const fromPhone = resolveJid(msg.key.remoteJid ?? '');
                 if (!fromPhone)
                     continue;
                 this.emit('message', {
@@ -206,11 +222,10 @@ export class BaileysAdapter {
                 });
                 synced++;
             }
-            logEvent('messaging-history.set', `synced ${synced} messages to DB`);
+            logEvent('messaging-history.set', `emitted ${synced} messages`);
         });
         // ── Live messages ────────────────────────────────────────────────────
         this.sock.ev.on('messages.upsert', ({ messages, type }) => {
-            // 'notify' = live message; 'append' = WA Web also sends new msgs as append sometimes
             if (type !== 'notify' && type !== 'append')
                 return;
             for (const msg of messages) {
@@ -221,10 +236,9 @@ export class BaileysAdapter {
                     null;
                 if (!text)
                     continue;
-                const remoteJid = msg.key.remoteJid ?? '';
-                if (!remoteJid.endsWith('@s.whatsapp.net'))
+                const fromPhone = resolveJid(msg.key.remoteJid ?? '');
+                if (!fromPhone)
                     continue;
-                const fromPhone = remoteJid.replace('@s.whatsapp.net', '');
                 const fromName = msg.pushName ?? undefined;
                 const waMessageId = msg.key.id ?? `${Date.now()}`;
                 const timestamp = Number(msg.messageTimestamp) * 1000;
