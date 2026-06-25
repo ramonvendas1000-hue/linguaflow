@@ -31,7 +31,8 @@ export class BaileysAdapter implements WhatsAppAdapter {
   on(event: 'message', cb: EventCallback<RawInboundMessage>): void;
   on(event: 'qr', cb: EventCallback<string>): void;
   on(event: 'status', cb: EventCallback<WaStatusValue>): void;
-  on(event: string, cb: (...args: unknown[]) => void): void {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  on(event: string, cb: (data: any) => void): void {
     if (event === 'message') this.messageListeners.push(cb as EventCallback<RawInboundMessage>);
     if (event === 'qr') this.qrListeners.push(cb as EventCallback<string>);
     if (event === 'status') this.statusListeners.push(cb as EventCallback<WaStatusValue>);
