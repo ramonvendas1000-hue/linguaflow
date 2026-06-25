@@ -24,16 +24,27 @@ export class MessagePipeline {
     return phone.replace(/@s\.whatsapp\.net$/, '').replace(/@lid$/, '');
   }
 
+  private isLidPhone(phone: string): boolean {
+    return phone.endsWith('@lid') || (!phone.includes('@') && /^\d{10,}$/.test(phone));
+  }
+
+  private isAutoName(name: string, phone: string): boolean {
+    const clean = this.cleanPhone(phone);
+    return name === clean || name === phone || /^Contato \d+$/.test(name) || /^\d{10,}$/.test(name);
+  }
+
+  private bestName(rawName: string | undefined, phone: string): string {
+    if (rawName) return rawName;
+    if (!this.isLidPhone(phone)) return this.cleanPhone(phone);
+    return this.db.nextContactName(); // "Contato 1", "Contato 2", etc.
+  }
+
   // Called by chats.set / contacts.set — ensures contact exists without a message
   handleContactDiscovery(raw: RawContact): void {
-    const cleanName = raw.name
-      ? raw.name
-      : this.cleanPhone(raw.phone); // use stripped number as fallback name
-
     let contact = this.db.getContactByPhone(raw.phone);
     if (!contact) {
       contact = this.db.saveContact({
-        name: cleanName,
+        name: this.bestName(raw.name, raw.phone),
         phone: raw.phone,
         currentLang: 'pt',
         autoDetectLang: true,
@@ -41,13 +52,10 @@ export class MessagePipeline {
         online: false,
       });
       this.broadcast('contact:updated', contact);
-    } else {
-      // Update name if we have a better one
-      const currentIsDefault = contact.name === this.cleanPhone(contact.phone) || contact.name === contact.phone;
-      if (raw.name && (currentIsDefault || !contact.name)) {
-        const updated = this.db.updateContact(contact.id, { name: raw.name });
-        if (updated) this.broadcast('contact:updated', updated);
-      }
+    } else if (raw.name && this.isAutoName(contact.name, contact.phone)) {
+      // We now have a real name (pushName) — upgrade from auto-number
+      const updated = this.db.updateContact(contact.id, { name: raw.name });
+      if (updated) this.broadcast('contact:updated', updated);
     }
   }
 
@@ -58,7 +66,7 @@ export class MessagePipeline {
     let contact = this.db.getContactByPhone(raw.fromPhone);
     if (!contact) {
       contact = this.db.saveContact({
-        name: raw.fromName ?? this.cleanPhone(raw.fromPhone),
+        name: this.bestName(raw.fromName, raw.fromPhone),
         phone: raw.fromPhone,
         currentLang: 'pt',
         autoDetectLang: true,
@@ -93,24 +101,22 @@ export class MessagePipeline {
     let contact = this.db.getContactByPhone(raw.fromPhone);
     if (!contact) {
       contact = this.db.saveContact({
-        name: raw.fromName ?? this.cleanPhone(raw.fromPhone),
+        name: this.bestName(raw.fromName, raw.fromPhone),
         phone: raw.fromPhone,
         currentLang: 'pt',
         autoDetectLang: true,
         listId: 'list_incoming',
         online: true,
       });
-    } else if (raw.fromName) {
-      // Update name with pushName whenever available and current name is a lid-based default
-      const cleanId = this.cleanPhone(contact.phone);
-      const currentIsDefault = contact.name === cleanId || contact.name === contact.phone || contact.name === `${cleanId}@lid`;
-      if (currentIsDefault) {
-        const updated = this.db.updateContact(contact.id, { name: raw.fromName, online: true });
-        if (updated) {
-          contact = updated;
-          this.broadcast('contact:updated', updated);
-        }
+    } else if (raw.fromName && this.isAutoName(contact.name, contact.phone)) {
+      // Upgrade from auto-number to real pushName
+      const updated = this.db.updateContact(contact.id, { name: raw.fromName, online: true });
+      if (updated) {
+        contact = updated;
+        this.broadcast('contact:updated', updated);
       }
+    } else {
+      this.db.updateContact(contact.id, { online: true });
     }
 
     const detectedLang = contact.autoDetectLang

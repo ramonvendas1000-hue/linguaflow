@@ -503,7 +503,7 @@ function TopBar({ onQrClick, onLeave }: { onQrClick: () => void; onLeave: () => 
 
 // ── Conversation List ──────────────────────────────────────────────────────
 function ConversationList() {
-  const { contacts, lists, listFilter, searchQuery, activeContactId, setActiveContact, setListFilter, setSearchQuery, markRead, workspace } = useStore();
+  const { contacts, lists, listFilter, searchQuery, activeContactId, messages, setActiveContact, setListFilter, setSearchQuery, markRead, workspace } = useStore();
   const socket = getSocket();
 
   const filtered = contacts
@@ -604,14 +604,28 @@ function ConversationList() {
                   )}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 3 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
                     <span style={{ fontWeight: 600, fontSize: 13, color: '#E5E9F2', flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                       {contact.name}
                     </span>
-                    <span style={{ fontSize: 10, fontFamily: 'JetBrains Mono, monospace', color: '#64748B' }}>
+                    <span style={{ fontSize: 10, fontFamily: 'JetBrains Mono, monospace', color: '#64748B', flexShrink: 0 }}>
                       {contact.lastMessageAt ? formatRelative(contact.lastMessageAt) : ''}
                     </span>
                   </div>
+                  {/* Last message preview */}
+                  {(() => {
+                    const msgs = messages[contact.id] ?? [];
+                    const last = msgs[msgs.length - 1];
+                    if (!last) return null;
+                    const preview = last.direction === 'inbound'
+                      ? (last.translationStatus === 'ok' ? last.translatedText : last.originalText)
+                      : last.originalText;
+                    return (
+                      <div style={{ fontSize: 11, color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 3 }}>
+                        {last.direction === 'outbound' ? '↗ ' : ''}{preview?.slice(0, 50)}
+                      </div>
+                    );
+                  })()}
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span style={{
                       padding: '1px 5px', borderRadius: 5,
@@ -619,9 +633,6 @@ function ConversationList() {
                       fontSize: 10, fontWeight: 700, fontFamily: 'JetBrains Mono, monospace', flexShrink: 0,
                     }}>
                       {LANG_LABELS[contact.currentLang]}
-                    </span>
-                    <span style={{ fontSize: 11, color: '#64748B', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
-                      {displayPhone(contact.phone)}
                     </span>
                     {contact.unread > 0 && (
                       <span style={{
@@ -865,7 +876,7 @@ function ContactPanel() {
         </div>
 
         {editingName ? (
-          <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 8 }}>
             <input
               value={nameInput}
               onChange={e => setNameInput(e.target.value)}
@@ -880,13 +891,34 @@ function ContactPanel() {
             <motion.button variants={pop} initial="rest" whileHover="hover" whileTap="tap" onClick={() => setEditingName(false)} style={{ padding: '5px 8px', borderRadius: 8, background: 'rgba(148,163,184,0.08)', border: 'none', color: '#64748B', fontSize: 11, cursor: 'pointer' }}>✕</motion.button>
           </div>
         ) : (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: '#E5E9F2' }}>{contact.name}</div>
-            <motion.button variants={pop} initial="rest" whileHover="hover" whileTap="tap" onClick={() => { setNameInput(contact.name); setEditingName(true); }} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#64748B', fontSize: 12, padding: '2px 4px' }}>✏</motion.button>
+          <>
+            <div style={{ fontWeight: 700, fontSize: 15, color: '#E5E9F2', marginTop: 6 }}>{contact.name}</div>
+            <motion.button
+              variants={pop} initial="rest" whileHover="hover" whileTap="tap"
+              onClick={() => { setNameInput(contact.name); setEditingName(true); }}
+              style={{
+                marginTop: 6, padding: '5px 14px', borderRadius: 8, background: 'rgba(37,99,235,0.15)',
+                border: '1px solid rgba(37,99,235,0.35)', color: '#60A5FA', fontSize: 11, fontWeight: 700,
+                cursor: 'pointer', display: 'block', width: '100%',
+              }}
+            >
+              ✏ Renomear Contato
+            </motion.button>
+          </>
+        )}
+
+        {/* @lid explanation */}
+        {contact.phone.endsWith('@lid') && !editingName && (
+          <div style={{
+            marginTop: 8, padding: '7px 10px', borderRadius: 8,
+            background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
+            color: '#D97706', fontSize: 10, lineHeight: 1.5,
+          }}>
+            ⚠ ID interno do WhatsApp. O número real não está disponível via API vinculada. Renomeie para identificar.
           </div>
         )}
 
-        <div style={{ color: '#64748B', fontSize: 11, marginTop: 4, fontFamily: 'JetBrains Mono, monospace' }}>{displayPhone(contact.phone)}</div>
+        <div style={{ color: '#475569', fontSize: 10, marginTop: 6, fontFamily: 'JetBrains Mono, monospace' }}>{displayPhone(contact.phone)}</div>
       </div>
 
       {/* Language */}

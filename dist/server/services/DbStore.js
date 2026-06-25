@@ -11,7 +11,12 @@ export class DbStore {
         this.messages = new Map();
         this.lists = new Map();
         this.waMessageIndex = new Set();
+        this.contactCounter = 0;
         DEFAULT_LISTS.forEach(l => this.lists.set(l.id, l));
+    }
+    nextContactName() {
+        this.contactCounter++;
+        return `Contato ${this.contactCounter}`;
     }
     // ─── Lists ───────────────────────────────────────────────────────────────
     allLists() {

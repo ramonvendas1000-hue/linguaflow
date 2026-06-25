@@ -13,9 +13,15 @@ export class DbStore {
   private messages  = new Map<string, Message[]>();
   private lists     = new Map<string, CrmList>();
   private waMessageIndex = new Set<string>();
+  private contactCounter = 0;
 
   constructor() {
     DEFAULT_LISTS.forEach(l => this.lists.set(l.id, l));
+  }
+
+  nextContactName(): string {
+    this.contactCounter++;
+    return `Contato ${this.contactCounter}`;
   }
 
   // ─── Lists ───────────────────────────────────────────────────────────────
