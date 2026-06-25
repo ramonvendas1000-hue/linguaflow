@@ -187,6 +187,11 @@ function WorkspaceScreen() {
   const [newName, setNewName] = useState('');
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState('');
+  const [cloudStatus, setCloudStatus] = useState<{ available: boolean; phoneNumberId: string | null; webhookUrl: string; webhookVerifyToken: string } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/cloud-api-status').then(r => r.json()).then(setCloudStatus).catch(() => {});
+  }, []);
 
   function joinWorkspace(id: string) {
     getSocket()?.emit('workspace:join', { workspaceId: id });
@@ -255,9 +260,53 @@ function WorkspaceScreen() {
           </div>
           {error && <div style={{ color: '#EF4444', fontSize: 12, marginTop: 8 }}>{error}</div>}
           <div style={{ color: '#475569', fontSize: 11, marginTop: 10 }}>
-            💡 Use o mesmo nome após reinicializações para reconectar sem escanear QR novamente
+            {cloudStatus?.available
+              ? '✅ Modo: WhatsApp Business API Oficial — números reais, envio garantido'
+              : '⚠ Modo: Baileys (QR). Configure WHATSAPP_TOKEN no Render para usar a API Oficial.'}
           </div>
         </div>
+
+        {/* Cloud API setup card */}
+        {cloudStatus && !cloudStatus.available && (
+          <div style={{
+            background: '#161D2E', borderRadius: 16, padding: 20,
+            border: '1px solid rgba(245,158,11,0.20)',
+          }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: '#D97706', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 10 }}>
+              API Oficial do WhatsApp (recomendado)
+            </div>
+            <div style={{ color: '#94A3B8', fontSize: 12, lineHeight: 1.6 }}>
+              Para receber números reais e enviar mensagens corretamente, configure no Render:
+            </div>
+            <div style={{
+              marginTop: 10, padding: '10px 12px', borderRadius: 8,
+              background: '#0B0F1C', fontFamily: 'JetBrains Mono, monospace',
+              fontSize: 11, color: '#94A3B8', lineHeight: 1.8,
+              border: '1px solid rgba(148,163,184,0.10)',
+            }}>
+              <div style={{ color: '#60A5FA' }}>WHATSAPP_TOKEN</div>
+              <div>= seu token permanente da Meta</div>
+              <div style={{ color: '#60A5FA', marginTop: 6 }}>WHATSAPP_PHONE_NUMBER_ID</div>
+              <div>= ID do número no Meta Dashboard</div>
+              <div style={{ color: '#60A5FA', marginTop: 6 }}>WEBHOOK_VERIFY_TOKEN</div>
+              <div>= linguaflow-webhook (ou qualquer string)</div>
+              <div style={{ marginTop: 8, color: '#475569' }}>Webhook URL para Meta:</div>
+              <div style={{ color: '#10B981', wordBreak: 'break-all' }}>
+                https://linguaflow-2s8g.onrender.com/api/webhook
+              </div>
+            </div>
+          </div>
+        )}
+
+        {cloudStatus?.available && (
+          <div style={{
+            background: '#161D2E', borderRadius: 12, padding: 14,
+            border: '1px solid rgba(16,185,129,0.25)',
+            color: '#10B981', fontSize: 12,
+          }}>
+            ✅ WhatsApp Business API Oficial ativa — Phone Number ID: {cloudStatus.phoneNumberId}
+          </div>
+        )}
 
         {/* Existing workspaces */}
         {workspaceList.length > 0 && (
@@ -768,8 +817,13 @@ function ChatWindow() {
 
       <div style={{ padding: '12px 16px', borderTop: '1px solid rgba(148,163,184,0.08)', background: '#0B0F1C', flexShrink: 0 }}>
         {sendError && (
-          <div style={{ padding: '8px 12px', borderRadius: 8, marginBottom: 8, background: 'rgba(239,68,68,0.12)', border: '1px solid rgba(239,68,68,0.3)', color: '#EF4444', fontSize: 12 }}>
+          <div style={{ padding: '8px 12px', borderRadius: 8, marginBottom: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#F87171', fontSize: 12, lineHeight: 1.5 }}>
             ⚠ {sendError}
+            {sendError.includes('@lid') || sendError.includes('API Oficial') ? (
+              <div style={{ marginTop: 6, color: '#F59E0B', fontSize: 11 }}>
+                Configure WHATSAPP_TOKEN e WHATSAPP_PHONE_NUMBER_ID no Render → Redeploy → crie novo workspace.
+              </div>
+            ) : null}
           </div>
         )}
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', background: '#161D2E', borderRadius: 14, border: '1px solid rgba(148,163,184,0.10)', padding: '8px 12px' }}>

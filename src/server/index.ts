@@ -5,7 +5,9 @@ import { Server as SocketServer } from 'socket.io';
 import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { WorkspaceManager } from './WorkspaceManager.js';
+import { WorkspaceManager, cloudApiAvailable } from './WorkspaceManager.js';
+import { CloudApiAdapter } from './adapters/CloudApiAdapter.js';
+import type { CloudApiWebhookBody } from './adapters/CloudApiAdapter.js';
 import { eventLog } from './adapters/BaileysAdapter.js';
 import type {
   SendMessagePayload,
@@ -37,6 +39,51 @@ const clientDist = path.resolve(__dirname, '../../client/dist');
 app.use(express.static(clientDist));
 
 // Debug endpoint — shows current server state
+// ── WhatsApp Business Cloud API webhook ──────────────────────────────────────
+// Meta verifies the webhook with a GET first
+app.get('/api/webhook', (req, res) => {
+  const mode      = req.query['hub.mode'];
+  const token     = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  const expected  = process.env.WEBHOOK_VERIFY_TOKEN ?? 'linguaflow-webhook';
+  if (mode === 'subscribe' && token === expected) {
+    console.log('[webhook] Meta webhook verified');
+    res.status(200).send(challenge as string);
+  } else {
+    res.status(403).end();
+  }
+});
+
+// Receive inbound messages from Meta Cloud API
+app.post('/api/webhook', (req, res) => {
+  res.status(200).end(); // must respond quickly
+
+  const body = req.body as CloudApiWebhookBody;
+  if (body?.object !== 'whatsapp_business_account') return;
+
+  // Route to workspace by phone_number_id
+  const phoneNumberId = body.entry?.[0]?.changes?.[0]?.value?.metadata?.phone_number_id;
+  if (!phoneNumberId) return;
+
+  const ws = wm.getByPhoneNumberId(phoneNumberId);
+  if (!ws) {
+    console.warn('[webhook] No workspace for phoneNumberId:', phoneNumberId);
+    return;
+  }
+
+  (ws.wa as CloudApiAdapter).processWebhook(body);
+});
+
+// Cloud API status endpoint
+app.get('/api/cloud-api-status', (_req, res) => {
+  res.json({
+    available: cloudApiAvailable(),
+    phoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? null,
+    webhookUrl: `${process.env.PUBLIC_URL ?? 'https://linguaflow-2s8g.onrender.com'}/api/webhook`,
+    webhookVerifyToken: process.env.WEBHOOK_VERIFY_TOKEN ?? 'linguaflow-webhook',
+  });
+});
+
 // Test translation endpoint
 app.get('/api/test-translation', async (req, res) => {
   const { translate } = await import('./services/translation.js');

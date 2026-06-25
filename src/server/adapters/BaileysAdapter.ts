@@ -332,8 +332,26 @@ export class BaileysAdapter implements WhatsAppAdapter {
 
   async sendMessage(phone: string, text: string): Promise<void> {
     if (!this.sock) throw new Error('WhatsApp not connected');
-    // phone may be a full JID (1234@lid, 55XX@s.whatsapp.net) or a plain number
     const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
-    await this.sock.sendMessage(jid, { text });
+    logEvent('sendMessage', `to=${jid} text="${text.slice(0, 40)}"`);
+
+    // @lid JIDs cannot be used for outbound messages — Baileys can only send to @s.whatsapp.net
+    if (jid.endsWith('@lid')) {
+      logEvent('sendMessage', 'BLOCKED: @lid JID not supported for sending. Use WhatsApp Business API.');
+      throw new Error(
+        'Não é possível enviar para este contato via Baileys. ' +
+        'O WhatsApp usa IDs internos (@lid) que não funcionam para envio. ' +
+        'Configure a API Oficial do WhatsApp Business para habilitar envios.'
+      );
+    }
+
+    try {
+      const result = await this.sock.sendMessage(jid, { text });
+      logEvent('sendMessage', `OK msgId=${result?.key?.id ?? 'unknown'}`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      logEvent('sendMessage', `ERROR: ${msg}`);
+      throw err;
+    }
   }
 }

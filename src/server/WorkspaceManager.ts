@@ -2,6 +2,8 @@ import path from 'path';
 import { v4 as uuid } from 'uuid';
 import type { Server as SocketServer } from 'socket.io';
 import { BaileysAdapter } from './adapters/BaileysAdapter.js';
+import { CloudApiAdapter } from './adapters/CloudApiAdapter.js';
+import type { WhatsAppAdapter } from './adapters/WhatsAppAdapter.js';
 import { MessagePipeline } from './MessagePipeline.js';
 import { DbStore } from './services/DbStore.js';
 import type { WorkspaceInfo } from '../types/index.js';
@@ -16,21 +18,31 @@ function nameToSlug(name: string): string {
     .slice(0, 32) || 'workspace';
 }
 
+export type AdapterType = 'baileys' | 'cloudapi';
+
 interface Workspace {
   info: WorkspaceInfo;
-  wa: BaileysAdapter;
+  wa: WhatsAppAdapter;
+  adapterType: AdapterType;
   db: DbStore;
   pipeline: MessagePipeline;
   lastQr: string | null;
 }
 
+// Check if Cloud API env vars are set
+export function cloudApiAvailable(): boolean {
+  return !!(process.env.WHATSAPP_TOKEN && process.env.WHATSAPP_PHONE_NUMBER_ID);
+}
+
 export class WorkspaceManager {
   private workspaces = new Map<string, Workspace>();
-  private slugIndex  = new Map<string, string>(); // slug → workspaceId
+  private slugIndex  = new Map<string, string>();
+  // Map phoneNumberId → workspaceId for Cloud API webhook routing
+  private phoneNumberIdIndex = new Map<string, string>();
 
   constructor(private io: SocketServer) {}
 
-  create(name: string): WorkspaceInfo {
+  create(name: string, adapterType?: AdapterType): WorkspaceInfo {
     const slug = nameToSlug(name);
 
     // Reuse workspace if same slug already exists (e.g. server restart)
@@ -40,15 +52,28 @@ export class WorkspaceManager {
       if (ws) return ws.info;
     }
 
+    // Auto-select adapter: Cloud API if available and requested (or if Baileys not explicitly chosen)
+    const type: AdapterType = adapterType
+      ?? (cloudApiAvailable() ? 'cloudapi' : 'baileys');
+
     const id = uuid();
     const info: WorkspaceInfo = { id, name, slug, createdAt: Date.now() };
 
-    const sessionDir = path.resolve(`.wa-sessions/${slug}`);
-    const wa       = new BaileysAdapter(sessionDir);
+    let wa: WhatsAppAdapter;
+    if (type === 'cloudapi') {
+      const token         = process.env.WHATSAPP_TOKEN!;
+      const phoneNumberId = process.env.WHATSAPP_PHONE_NUMBER_ID!;
+      wa = new CloudApiAdapter(phoneNumberId, token);
+      this.phoneNumberIdIndex.set(phoneNumberId, id);
+    } else {
+      const sessionDir = path.resolve(`.wa-sessions/${slug}`);
+      wa = new BaileysAdapter(sessionDir);
+    }
+
     const db       = new DbStore();
     const pipeline = new MessagePipeline(wa, this.io, id, db);
 
-    const workspace: Workspace = { info, wa, db, pipeline, lastQr: null };
+    const workspace: Workspace = { info, wa, adapterType: type, db, pipeline, lastQr: null };
     this.workspaces.set(id, workspace);
     this.slugIndex.set(slug, id);
 
@@ -62,9 +87,8 @@ export class WorkspaceManager {
       if (status === 'open') workspace.lastQr = null;
       this.io.to(id).emit('wa:status', status);
 
-      // After WA connects, re-send bootstrap after a delay to include synced contacts
       if (status === 'open') {
-        const delays = [3000, 8000, 15000]; // 3s, 8s, 15s
+        const delays = type === 'cloudapi' ? [500] : [3000, 8000, 15000];
         delays.forEach(delay => {
           setTimeout(() => {
             const contactCount = workspace.db.allContacts().length;
@@ -81,9 +105,7 @@ export class WorkspaceManager {
     });
 
     wa.on('contact', (raw) => {
-      try {
-        pipeline.handleContactDiscovery(raw);
-      } catch {}
+      try { pipeline.handleContactDiscovery(raw); } catch {}
     });
 
     wa.on('message', async (raw) => {
@@ -100,7 +122,7 @@ export class WorkspaceManager {
 
     wa.connect().catch(err => console.error(`[ws:${slug}] connect error:`, err));
 
-    console.log(`[WorkspaceManager] Workspace criado: "${name}" (slug: ${slug}, id: ${id})`);
+    console.log(`[WorkspaceManager] Workspace criado: "${name}" (slug: ${slug}, adapter: ${type})`);
     return info;
   }
 
@@ -108,8 +130,18 @@ export class WorkspaceManager {
     return this.workspaces.get(id);
   }
 
+  getByPhoneNumberId(phoneNumberId: string): Workspace | undefined {
+    const id = this.phoneNumberIdIndex.get(phoneNumberId);
+    if (!id) return undefined;
+    return this.workspaces.get(id);
+  }
+
   list(): WorkspaceInfo[] {
     return Array.from(this.workspaces.values()).map(w => w.info);
+  }
+
+  adapterType(id: string): AdapterType | undefined {
+    return this.workspaces.get(id)?.adapterType;
   }
 
   async delete(id: string): Promise<boolean> {
@@ -117,6 +149,10 @@ export class WorkspaceManager {
     if (!ws) return false;
     await ws.wa.disconnect().catch(() => {});
     this.slugIndex.delete(ws.info.slug);
+    // Remove from phoneNumberId index if Cloud API
+    for (const [pid, wid] of this.phoneNumberIdIndex.entries()) {
+      if (wid === id) { this.phoneNumberIdIndex.delete(pid); break; }
+    }
     this.workspaces.delete(id);
     return true;
   }
