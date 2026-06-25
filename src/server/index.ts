@@ -13,6 +13,7 @@ import type {
   SendMessagePayload,
   MoveContactPayload,
   SetLangPayload,
+  SetPhonePayload,
   RenameContactPayload,
   AddNotePayload,
   RemoveNotePayload,
@@ -222,6 +223,14 @@ io.on('connection', (socket) => {
     const ws = wm.get(workspaceId);
     if (!ws) return;
     const updated = ws.db.updateContact(contactId, { currentLang: lang as LangCode, autoDetectLang: false });
+    if (updated) io.to(workspaceId).emit('contact:updated', updated);
+  });
+
+  socket.on('contact:setPhone', ({ workspaceId, contactId, phone }: SetPhonePayload & { workspaceId: string }) => {
+    const ws = wm.get(workspaceId);
+    if (!ws) return;
+    const digits = phone.replace(/\D/g, '');
+    const updated = ws.db.updateContact(contactId, { sendPhone: digits || undefined });
     if (updated) io.to(workspaceId).emit('contact:updated', updated);
   });
 

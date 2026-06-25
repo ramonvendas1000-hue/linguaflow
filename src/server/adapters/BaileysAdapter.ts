@@ -331,19 +331,20 @@ export class BaileysAdapter implements WhatsAppAdapter {
   }
 
   async sendMessage(phone: string, text: string): Promise<void> {
-    if (!this.sock) throw new Error('WhatsApp not connected');
-    const jid = phone.includes('@') ? phone : `${phone}@s.whatsapp.net`;
-    logEvent('sendMessage', `to=${jid} text="${text.slice(0, 40)}"`);
+    if (!this.sock) throw new Error('WhatsApp não conectado');
 
-    // @lid JIDs cannot be used for outbound messages — Baileys can only send to @s.whatsapp.net
-    if (jid.endsWith('@lid')) {
-      logEvent('sendMessage', 'BLOCKED: @lid JID not supported for sending. Use WhatsApp Business API.');
-      throw new Error(
-        'Não é possível enviar para este contato via Baileys. ' +
-        'O WhatsApp usa IDs internos (@lid) que não funcionam para envio. ' +
-        'Configure a API Oficial do WhatsApp Business para habilitar envios.'
-      );
+    // Normalize phone to JID
+    // Accepts: @lid JIDs, @s.whatsapp.net JIDs, or plain digits
+    let jid: string;
+    if (phone.includes('@')) {
+      jid = phone; // already a JID (@lid or @s.whatsapp.net)
+    } else {
+      // Plain number — strip non-digits and build @s.whatsapp.net
+      const digits = phone.replace(/\D/g, '');
+      jid = `${digits}@s.whatsapp.net`;
     }
+
+    logEvent('sendMessage', `to=${jid} text="${text.slice(0, 40)}"`);
 
     try {
       const result = await this.sock.sendMessage(jid, { text });
@@ -351,7 +352,7 @@ export class BaileysAdapter implements WhatsAppAdapter {
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       logEvent('sendMessage', `ERROR: ${msg}`);
-      throw err;
+      throw new Error(`Falha ao enviar: ${msg}`);
     }
   }
 }

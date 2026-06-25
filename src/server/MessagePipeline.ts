@@ -159,13 +159,31 @@ export class MessagePipeline {
     if (!contact) throw new Error(`Contact not found: ${contactId}`);
 
     const customerLang = contact.currentLang;
-    const translationResult = await translate({ text: textPt, from: 'pt', to: customerLang });
 
-    if (!translationResult.ok) {
-      throw new Error('Translation failed — message NOT sent to protect customer experience');
+    // Translate pt → customer lang (skip if same language)
+    let translatedText = textPt;
+    let translationStatus: 'ok' | 'skipped' | 'failed' = 'skipped';
+    let translationProvider: 'mymemory' | 'google' | 'openai' | 'mock' | undefined;
+
+    if (customerLang !== 'pt') {
+      const result = await translate({ text: textPt, from: 'pt', to: customerLang });
+      if (!result.ok) {
+        // Send original text instead of blocking — translation failure ≠ silence
+        translatedText = textPt;
+        translationStatus = 'failed';
+      } else {
+        translatedText = result.text;
+        translationStatus = 'ok';
+        translationProvider = result.provider;
+      }
     }
 
-    await this.wa.sendMessage(contact.phone, translationResult.text);
+    // Use sendPhone (user-entered real number) if set, otherwise use internal JID
+    const sendTo = contact.sendPhone
+      ? contact.sendPhone.replace(/\D/g, '') // normalize digits only
+      : contact.phone;
+
+    await this.wa.sendMessage(sendTo, translatedText);
 
     const message: Message = {
       id: uuid(),
@@ -173,10 +191,10 @@ export class MessagePipeline {
       direction: 'outbound',
       originalText: textPt,
       originalLang: 'pt',
-      translatedText: translationResult.text,
+      translatedText,
       translatedLang: customerLang,
-      translationStatus: 'ok',
-      translationProvider: translationResult.provider,
+      translationStatus,
+      translationProvider,
       timestamp: Date.now(),
       delivered: true,
     };

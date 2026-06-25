@@ -190,6 +190,15 @@ io.on('connection', (socket) => {
         if (updated)
             io.to(workspaceId).emit('contact:updated', updated);
     });
+    socket.on('contact:setPhone', ({ workspaceId, contactId, phone }) => {
+        const ws = wm.get(workspaceId);
+        if (!ws)
+            return;
+        const digits = phone.replace(/\D/g, '');
+        const updated = ws.db.updateContact(contactId, { sendPhone: digits || undefined });
+        if (updated)
+            io.to(workspaceId).emit('contact:updated', updated);
+    });
     socket.on('contact:rename', ({ workspaceId, contactId, name }) => {
         const ws = wm.get(workspaceId);
         if (!ws)

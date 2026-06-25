@@ -28,7 +28,8 @@ export interface Message {
 export interface Contact {
   id: string;
   name: string;
-  phone: string;
+  phone: string;        // @lid or @s.whatsapp.net JID (internal routing)
+  sendPhone?: string;   // real phone number set by user (e.g. 5511999999999)
   currentLang: LangCode;
   autoDetectLang: boolean;
   listId: string;
@@ -66,6 +67,7 @@ export interface BootstrapPayload {
 export interface SendMessagePayload { contactId: string; text: string; }
 export interface MoveContactPayload { contactId: string; listId: string; }
 export interface SetLangPayload { contactId: string; lang: LangCode; }
+export interface SetPhonePayload { contactId: string; phone: string; }
 export interface RenameContactPayload { contactId: string; name: string; }
 export interface AddNotePayload { contactId: string; text: string; }
 export interface RemoveNotePayload { contactId: string; noteId: string; }

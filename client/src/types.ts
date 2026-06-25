@@ -29,6 +29,7 @@ export interface Contact {
   id: string;
   name: string;
   phone: string;
+  sendPhone?: string;
   currentLang: LangCode;
   autoDetectLang: boolean;
   listId: string;

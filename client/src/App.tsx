@@ -819,11 +819,6 @@ function ChatWindow() {
         {sendError && (
           <div style={{ padding: '8px 12px', borderRadius: 8, marginBottom: 8, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: '#F87171', fontSize: 12, lineHeight: 1.5 }}>
             ⚠ {sendError}
-            {sendError.includes('@lid') || sendError.includes('API Oficial') ? (
-              <div style={{ marginTop: 6, color: '#F59E0B', fontSize: 11 }}>
-                Configure WHATSAPP_TOKEN e WHATSAPP_PHONE_NUMBER_ID no Render → Redeploy → crie novo workspace.
-              </div>
-            ) : null}
           </div>
         )}
         <div style={{ display: 'flex', gap: 10, alignItems: 'flex-end', background: '#161D2E', borderRadius: 14, border: '1px solid rgba(148,163,184,0.10)', padding: '8px 12px' }}>
@@ -864,10 +859,12 @@ function ContactPanel() {
   const socket  = getSocket();
   const contact = contacts.find(c => c.id === activeContactId);
 
-  const [editingName, setEditingName] = useState(false);
-  const [nameInput, setNameInput]     = useState('');
-  const [noteInput, setNoteInput]     = useState('');
+  const [editingName, setEditingName]   = useState(false);
+  const [nameInput, setNameInput]       = useState('');
+  const [noteInput, setNoteInput]       = useState('');
   const [showNoteInput, setShowNoteInput] = useState(false);
+  const [editingPhone, setEditingPhone] = useState(false);
+  const [phoneInput, setPhoneInput]     = useState('');
 
   useEffect(() => {
     if (contact) setNameInput(contact.name);
@@ -891,6 +888,13 @@ function ContactPanel() {
   function handleLangChange(lang: LangCode) {
     emit('contact:setLang', { contactId: contact!.id, lang });
     updateContact({ ...contact!, currentLang: lang, autoDetectLang: false });
+  }
+
+  function handleSavePhone() {
+    const digits = phoneInput.replace(/\D/g, '');
+    emit('contact:setPhone', { contactId: contact!.id, phone: digits });
+    updateContact({ ...contact!, sendPhone: digits || undefined });
+    setEditingPhone(false);
   }
 
   function handleMoveList(listId: string) {
@@ -961,18 +965,55 @@ function ContactPanel() {
           </>
         )}
 
-        {/* @lid explanation */}
-        {contact.phone.endsWith('@lid') && !editingName && (
-          <div style={{
-            marginTop: 8, padding: '7px 10px', borderRadius: 8,
-            background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)',
-            color: '#D97706', fontSize: 10, lineHeight: 1.5,
-          }}>
-            ⚠ ID interno do WhatsApp. O número real não está disponível via API vinculada. Renomeie para identificar.
+        <div style={{ color: '#475569', fontSize: 10, marginTop: 6, fontFamily: 'JetBrains Mono, monospace' }}>
+          {contact.sendPhone ? `+${contact.sendPhone}` : displayPhone(contact.phone)}
+        </div>
+      </div>
+
+      {/* Phone number for sending */}
+      <div style={{
+        padding: '12px 14px', borderRadius: 10,
+        background: contact.sendPhone ? 'rgba(16,185,129,0.06)' : 'rgba(245,158,11,0.06)',
+        border: `1px solid ${contact.sendPhone ? 'rgba(16,185,129,0.2)' : 'rgba(245,158,11,0.2)'}`,
+      }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: contact.sendPhone ? '#10B981' : '#D97706', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>
+          {contact.sendPhone ? '✅ Número configurado' : '📞 Número para envios'}
+        </div>
+        {contact.sendPhone && !editingPhone ? (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: 13, color: '#E5E9F2', flex: 1 }}>+{contact.sendPhone}</span>
+            <motion.button variants={pop} initial="rest" whileHover="hover" whileTap="tap"
+              onClick={() => { setPhoneInput(contact.sendPhone ?? ''); setEditingPhone(true); }}
+              style={{ background: 'none', border: 'none', color: '#64748B', cursor: 'pointer', fontSize: 12, padding: '2px 4px' }}>✏</motion.button>
+          </div>
+        ) : editingPhone ? (
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input
+              value={phoneInput}
+              onChange={e => setPhoneInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter') handleSavePhone(); if (e.key === 'Escape') setEditingPhone(false); }}
+              placeholder="5511999999999"
+              autoFocus
+              style={{ flex: 1, background: '#0B0F1C', border: '1px solid rgba(37,99,235,0.4)', borderRadius: 7, padding: '6px 8px', color: '#E5E9F2', fontSize: 12, outline: 'none', fontFamily: 'JetBrains Mono, monospace' }}
+            />
+            <motion.button variants={pop} initial="rest" whileHover="hover" whileTap="tap" onClick={handleSavePhone}
+              style={{ padding: '6px 10px', borderRadius: 7, background: '#2563EB', border: 'none', color: '#fff', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>✓</motion.button>
+            <motion.button variants={pop} initial="rest" whileHover="hover" whileTap="tap" onClick={() => setEditingPhone(false)}
+              style={{ padding: '6px 8px', borderRadius: 7, background: 'rgba(148,163,184,0.08)', border: 'none', color: '#64748B', cursor: 'pointer', fontSize: 12 }}>✕</motion.button>
+          </div>
+        ) : (
+          <div>
+            <div style={{ color: '#64748B', fontSize: 11, marginBottom: 8, lineHeight: 1.4 }}>
+              Digite o número com código do país (sem + ou espaços).
+              Ex: <span style={{ fontFamily: 'JetBrains Mono, monospace', color: '#94A3B8' }}>5511999999999</span>
+            </div>
+            <motion.button variants={pop} initial="rest" whileHover="hover" whileTap="tap"
+              onClick={() => { setPhoneInput(''); setEditingPhone(true); }}
+              style={{ width: '100%', padding: '7px 0', borderRadius: 8, background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.3)', color: '#F59E0B', fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
+              + Definir número do WhatsApp
+            </motion.button>
           </div>
         )}
-
-        <div style={{ color: '#475569', fontSize: 10, marginTop: 6, fontFamily: 'JetBrains Mono, monospace' }}>{displayPhone(contact.phone)}</div>
       </div>
 
       {/* Language */}
