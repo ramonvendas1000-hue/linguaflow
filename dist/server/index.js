@@ -15,6 +15,23 @@ app.use(cors());
 app.use(express.json());
 const clientDist = path.resolve(__dirname, '../../client/dist');
 app.use(express.static(clientDist));
+// Debug endpoint — shows current server state
+app.get('/api/debug', (_req, res) => {
+    const workspaces = wm.list().map(info => {
+        const ws = wm.get(info.id);
+        const contacts = ws.db.allContacts();
+        const msgs = ws.db.allMessagesGrouped();
+        const totalMsgs = Object.values(msgs).reduce((n, arr) => n + arr.length, 0);
+        return {
+            id: info.id, name: info.name, slug: info.slug,
+            waStatus: ws.wa.status(),
+            contacts: contacts.length,
+            messages: totalMsgs,
+            contactList: contacts.map(c => ({ name: c.name, phone: c.phone, lang: c.currentLang })),
+        };
+    });
+    res.json({ workspaces, uptime: process.uptime(), ts: Date.now() });
+});
 app.get('*', (_req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
 });
@@ -66,6 +83,19 @@ io.on('connection', (socket) => {
     socket.on('workspace:delete', async ({ workspaceId }) => {
         await wm.delete(workspaceId);
         io.emit('workspace:list', wm.list());
+    });
+    // ── Workspace: manual sync (re-sends bootstrap) ─────────────────────────
+    socket.on('workspace:sync', ({ workspaceId }) => {
+        const ws = wm.get(workspaceId);
+        if (!ws)
+            return;
+        socket.emit('bootstrap', {
+            contacts: ws.db.allContacts(),
+            messages: ws.db.allMessagesGrouped(),
+            lists: ws.db.allLists(),
+            workspace: ws.info,
+        });
+        console.log(`[sync] bootstrap re-sent: ${ws.db.allContacts().length} contacts`);
     });
     // ── WhatsApp: manual disconnect ──────────────────────────────────────────
     socket.on('wa:disconnect', async ({ workspaceId }) => {

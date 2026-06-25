@@ -61,6 +61,23 @@ export class WorkspaceManager {
     wa.on('status', (status) => {
       if (status === 'open') workspace.lastQr = null;
       this.io.to(id).emit('wa:status', status);
+
+      // After WA connects, re-send bootstrap after a delay to include synced contacts
+      if (status === 'open') {
+        const delays = [3000, 8000, 15000]; // 3s, 8s, 15s
+        delays.forEach(delay => {
+          setTimeout(() => {
+            const contactCount = workspace.db.allContacts().length;
+            console.log(`[ws:${slug}] auto-bootstrap @${delay}ms: ${contactCount} contacts`);
+            this.io.to(id).emit('bootstrap', {
+              contacts: workspace.db.allContacts(),
+              messages: workspace.db.allMessagesGrouped(),
+              lists:    workspace.db.allLists(),
+              workspace: info,
+            });
+          }, delay);
+        });
+      }
     });
 
     wa.on('contact', (raw) => {

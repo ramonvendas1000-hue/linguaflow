@@ -422,9 +422,17 @@ function QRModal({ qr, status, workspaceId, onClose }: { qr: string | null; stat
 
 // ── TopBar ─────────────────────────────────────────────────────────────────
 function TopBar({ onQrClick, onLeave }: { onQrClick: () => void; onLeave: () => void }) {
-  const { waStatus, workspace } = useStore();
+  const { waStatus, workspace, contacts } = useStore();
+  const [syncing, setSyncing] = useState(false);
   const statusColor = waStatus === 'open' ? '#10B981' : waStatus === 'connecting' ? '#F59E0B' : '#EF4444';
   const statusLabel = waStatus === 'open' ? 'Conectado' : waStatus === 'connecting' ? 'Conectando' : 'Desconectado';
+
+  function handleSync() {
+    if (!workspace) return;
+    setSyncing(true);
+    getSocket()?.emit('workspace:sync', { workspaceId: workspace.id });
+    setTimeout(() => setSyncing(false), 2000);
+  }
 
   return (
     <div style={{
@@ -457,6 +465,20 @@ function TopBar({ onQrClick, onLeave }: { onQrClick: () => void; onLeave: () => 
       }}>
         Google Translate
       </div>
+
+      <motion.button
+        variants={pop} initial="rest" whileHover="hover" whileTap="tap"
+        onClick={handleSync}
+        title={`Sincronizar contatos (${contacts.length} carregados)`}
+        style={{
+          padding: '5px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700,
+          background: syncing ? 'rgba(37,99,235,0.2)' : 'rgba(148,163,184,0.08)',
+          border: syncing ? '1px solid rgba(37,99,235,0.4)' : '1px solid transparent',
+          color: syncing ? '#60A5FA' : '#64748B', cursor: 'pointer',
+        }}
+      >
+        {syncing ? '⟳ Sync...' : `⟳ ${contacts.length}`}
+      </motion.button>
 
       <motion.button
         variants={pop} initial="rest" whileHover="hover" whileTap="tap"
